@@ -8,7 +8,7 @@ import { wrapFastifyLogger } from './logger.js'
 import { markSyncComplete } from './sync-state.js'
 import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatchlist, syncTraktList, syncTraktWatchedStatus, startDeviceAuth, tokenStatus } from './trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls, syncMdblistList } from './mdblist.js'
-import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream, summarizeStreamForLog } from './sootio.js'
+import { fetchRankedStreams, fetchRankedEpisodeStreams, fetchRankedStremioStreams, extractHashFromStream, summarizeStreamForLog, type StremioMediaType } from './sootio.js'
 import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
 import {
   markPlaybackStarted as markTorBoxPlaybackStarted,
@@ -74,6 +74,13 @@ getDb()
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
+  config.stremioSearchProviderUrls = [
+    ...parseStreamProviderUrls(s.rdStreamProviderUrls ?? ''),
+    ...parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? ''),
+    ...parseStreamProviderUrls(s.streamProviderUrls ?? ''),
+    ...config.streamProviderUrls,
+    ...(config.sootioUrl ? [config.sootioUrl] : []),
+  ].filter((url, index, urls) => urls.indexOf(url) === index)
   const activeDebridProvider = s.activeDebridProvider === 'tb'
     ? 'tb'
     : config.torBoxApiKey && !config.rdApiKey
@@ -81,7 +88,10 @@ getDb()
       : 'rd'
   if (activeDebridProvider === 'tb') {
     config.rdApiKey = ''
-    config.streamProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? '')
+    const torBoxProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? '')
+    config.streamProviderUrls = torBoxProviderUrls.length
+      ? torBoxProviderUrls
+      : parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
   } else {
     config.torBoxApiKey = ''
     config.streamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
@@ -136,7 +146,7 @@ function requestPlaybackUser(headers: Record<string, string | string[] | undefin
 
 // ── Play endpoint ─────────────────────────────────────────────────────────────
 // Called by Infuse when it follows the URL returned from PlaybackInfo.
-// Queries AIOStreams for the best RD-cached stream and 302s to the direct URL.
+// Queries Stremio add-ons for the best stream and 302s to the direct URL.
 
 function pad2(n: number) { return n.toString().padStart(2, '0') }
 
@@ -255,9 +265,12 @@ function prewarmPlayback(playPath: string, label: string): void {
     return
   }
 
+  const stremioRouteMatch = playPath.match(/^\/play\/stremio\/(movie|series)\/(.+)$/)
   const episodeMatch = playPath.match(/^\/play\/([^/]+)\/(\d+)\/(\d+)$/)
   const movieMatch = playPath.match(/^\/play\/([^/]+)$/)
-  const resolver = episodeMatch
+  const resolver = stremioRouteMatch
+    ? () => resolveStremioPlayback(stremioRouteMatch[1] as StremioMediaType, decodeURIComponent(stremioRouteMatch[2]))
+    : episodeMatch
     ? () => resolveEpisodePlayback(episodeMatch[1], Number.parseInt(episodeMatch[2], 10), Number.parseInt(episodeMatch[3], 10))
     : movieMatch
       ? () => resolveMoviePlayback(movieMatch[1])
@@ -447,6 +460,42 @@ function streamClearlyUsenetBacked(stream: { name?: string; title?: string; desc
   return /\busenet\b|\bnewznab\b/.test(text)
 }
 
+function streamClearlyTorBoxCached(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  const text = streamMetadataText(stream)
+  return /\btorbox\s*\(\s*(instant|cached)\s*\)|\binstant\s*\(\s*tb\s*\)|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|\bready\s*\(\s*tb\s*\)/.test(text)
+}
+
+function streamClearlyRealDebridCached(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  const text = streamMetadataText(stream)
+  return /\breal[-\s]?debrid\s*\(\s*(instant|cached)\s*\)|\binstant\s*\(\s*rd\s*\)|\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\bready\s*\(\s*rd\s*\)/.test(text)
+}
+
+function activeDebridIsTorBox(): boolean {
+  return Boolean(config.torBoxApiKey && !config.rdApiKey)
+}
+
+function activeDebridIsRealDebrid(): boolean {
+  return Boolean(config.rdApiKey && !config.torBoxApiKey)
+}
+
+function activeDebridProviderName(): 'RD' | 'TorBox' | null {
+  if (activeDebridIsRealDebrid()) return 'RD'
+  if (activeDebridIsTorBox()) return 'TorBox'
+  return null
+}
+
+function directStreamMatchesActiveDebrid(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  if (activeDebridIsRealDebrid()) return streamClearlyRealDebridCached(stream)
+  if (activeDebridIsTorBox()) return streamClearlyTorBoxCached(stream)
+  return true
+}
+
+function directStreamConflictsWithActiveDebrid(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  if (activeDebridIsRealDebrid()) return streamClearlyTorBoxCached(stream) && !streamClearlyRealDebridCached(stream)
+  if (activeDebridIsTorBox()) return streamClearlyRealDebridCached(stream) && !streamClearlyTorBoxCached(stream)
+  return false
+}
+
 function directPlaybackPenalty(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown>; url?: string }): number {
   if (!isDirectPlaybackUrl(stream.url)) return 0
   const text = streamMetadataText(stream)
@@ -556,6 +605,7 @@ async function resolvePlayableStream(
   label: string,
   cacheKey: string,
   fileHint?: string,
+  allowDirectUrls = false,
 ): Promise<PlayResolution> {
   if (config.rdApiKey || config.torBoxApiKey) {
     let rdTransientFailures = 0
@@ -568,6 +618,25 @@ async function resolvePlayableStream(
     const orderedStreams = streams
       .map((stream, index) => ({ stream, index }))
       .sort((a, b) => {
+        if (allowDirectUrls) {
+          const aDirectUrl = isDirectPlaybackUrl(a.stream.url)
+          const bDirectUrl = isDirectPlaybackUrl(b.stream.url)
+          if (aDirectUrl && !bDirectUrl) return -1
+          if (!aDirectUrl && bDirectUrl) return 1
+          if (aDirectUrl && bDirectUrl) {
+            if (activeDebridProviderName()) {
+              const aMatches = directStreamMatchesActiveDebrid(a.stream)
+              const bMatches = directStreamMatchesActiveDebrid(b.stream)
+              if (aMatches && !bMatches) return -1
+              if (!aMatches && bMatches) return 1
+              const aConflicts = directStreamConflictsWithActiveDebrid(a.stream)
+              const bConflicts = directStreamConflictsWithActiveDebrid(b.stream)
+              if (aConflicts && !bConflicts) return 1
+              if (!aConflicts && bConflicts) return -1
+            }
+            return directPlaybackPenalty(a.stream) - directPlaybackPenalty(b.stream) || a.index - b.index
+          }
+        }
         const aHash = extractHashFromStream(a.stream)
         const bHash = extractHashFromStream(b.stream)
         const aDirect = !aHash && isDirectPlaybackUrl(a.stream.url)
@@ -592,8 +661,48 @@ async function resolvePlayableStream(
         }
 
         const hint = streamFilenameHint(stream) ?? fileHint
+        if (allowDirectUrls && isDirectPlaybackUrl(stream.url)) {
+          const activeProvider = activeDebridProviderName()
+          const useDirectUrl = !activeProvider || directStreamMatchesActiveDebrid(stream)
+          if (!useDirectUrl) {
+            if (directStreamConflictsWithActiveDebrid(stream) && !hash) {
+              app.log.info(`play: skipping direct Stremio stream for ${label}, marked for another debrid provider while ${activeProvider} is active`)
+              continue
+            }
+            if (hash) {
+              const reason = directStreamConflictsWithActiveDebrid(stream) ? 'provider-mismatched' : 'unmarked'
+              app.log.info(`play: deferring ${reason} direct Stremio stream for ${label} to ${activeProvider} hash resolver`)
+            } else {
+              app.log.info(`play: skipping unverified direct Stremio stream for ${label} while ${activeProvider} is active, no torrent hash exposed`)
+              continue
+            }
+          } else {
+            const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
+            if (directFilename && !isVideoFile(directFilename)) {
+              app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
+              continue
+            }
+            if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
+              app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
+              continue
+            }
+            if (
+              directFilename
+              && config.englishStreamMode === 'require'
+              && isRemoteAudioProbeUnreliable(directFilename)
+              && !streamClearlyEnglish(stream)
+            ) {
+              app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed English metadata`)
+              continue
+            }
+            app.log.info(`play: direct Stremio stream selected for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
+            clearFailedPlay(cacheKey)
+            return { url: stream.url, filename: directFilename, provider: providerLabel }
+          }
+        }
+
         if (!hash) {
-          if (!config.torBoxApiKey || config.directPlaybackMode !== 'all' || !isDirectPlaybackUrl(stream.url)) {
+          if ((!allowDirectUrls && (!config.torBoxApiKey || config.directPlaybackMode !== 'all')) || !isDirectPlaybackUrl(stream.url)) {
             app.log.info(`play: skipping ${providerLabel} for ${label}, no torrent hash exposed; ${summarizeStreamForLog(stream)}`)
             continue
           }
@@ -811,6 +920,12 @@ async function resolveMoviePlayback(imdbId: string): Promise<PlayResolution> {
   return resolvePlayableStream(streams, imdbId, playPath)
 }
 
+async function resolveStremioPlayback(mediaType: StremioMediaType, externalId: string): Promise<PlayResolution> {
+  const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(externalId)}`
+  const streams = await fetchRankedStremioStreams(mediaType, externalId)
+  return resolvePlayableStream(streams, `${mediaType} ${externalId}`, playPath, undefined, true)
+}
+
 async function resolveEpisodePlayback(imdbId: string, season: number, episodeNumber: number): Promise<PlayResolution> {
   const playPath = `/play/${imdbId}/${season}/${episodeNumber}`
   const show = getShowByImdbId(imdbId)
@@ -863,6 +978,43 @@ app.get('/play/:imdbId', async (req, reply) => {
       return reply.code(err.statusCode).send(err.response)
     }
     app.log.warn(`play: no stream for ${imdbId}: ${err}`)
+    cacheFailedPlay(playPath, 'No streams found')
+    return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
+  }
+})
+
+app.get('/play/stremio/:mediaType/:externalId', async (req, reply) => {
+  const { mediaType, externalId } = req.params as { mediaType: StremioMediaType; externalId: string }
+  if (mediaType !== 'movie' && mediaType !== 'series') return reply.code(404).send({ error: 'Not found' })
+  const query = req.query as { token?: string; expires?: string } | undefined
+  const decodedExternalId = decodeURIComponent(externalId)
+  const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(decodedExternalId)}`
+  if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
+    if (!requestPlaybackUser(req.headers)) {
+      app.log.warn(`play: rejected unauthenticated Stremio playback request for ${mediaType} ${decodedExternalId}`)
+    } else {
+      app.log.warn(`play: rejected unsigned or expired Stremio playback request for ${mediaType} ${decodedExternalId}`)
+    }
+    return reply.code(401).send({ error: 'Unauthorized' })
+  }
+  const failedReason = getFailedPlayReason(playPath)
+  if (failedReason) {
+    app.log.info(`play: cached miss for Stremio ${mediaType} ${decodedExternalId} (${failedReason})`)
+    return reply.code(404).send({ error: failedReason, message: 'No Streams Found' })
+  }
+  try {
+    const label = `Stremio ${mediaType} ${decodedExternalId}`
+    const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveStremioPlayback(mediaType, decodedExternalId))
+    if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
+    const resolved = await promise
+    rememberTorBoxPlaybackUrl(playPath, resolved)
+    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
+    return reply.redirect(resolved.url, 302)
+  } catch (err) {
+    if (err instanceof PlaybackResolutionError) {
+      return reply.code(err.statusCode).send(err.response)
+    }
+    app.log.warn(`play: no Stremio stream for ${mediaType} ${decodedExternalId}: ${err}`)
     cacheFailedPlay(playPath, 'No streams found')
     return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
   }

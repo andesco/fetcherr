@@ -463,6 +463,12 @@ function assertDownloadUrl(value: string): string {
 
 // ── Public resolver ───────────────────────────────────────────────────────────
 
+export async function isCached(hash: string): Promise<boolean> {
+  if (!config.torBoxApiKey) throw new Error('TORBOX_API_KEY not configured')
+  const { cacheHash } = normalizeHashInput(hash)
+  return checkCached(cacheHash)
+}
+
 /**
  * Given a torrent hash, verify TorBox has it cached, add it, request a
  * direct-download link, and return the resolved stream. Torrent is deleted

@@ -15,6 +15,7 @@ import {
 } from '../tmdb.js'
 import type { Movie, Show, Season, Episode } from '../db.js'
 import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
+import { searchStremioMetas, type StremioMediaType, type StremioMeta } from '../sootio.js'
 
 // ── ID helpers ────────────────────────────────────────────────────────────────
 // Real Jellyfin uses GUIDs for all IDs. Infuse validates this client-side.
@@ -27,9 +28,16 @@ import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
 //   Episode: 00000000-0000-4000-8003-{showTmdbId 6 hex}{seasonNum 3 hex}{episodeNum 3 hex}
 //   Search Movie:  00000000-0000-4000-8004-{tmdbId 12 hex}
 //   Search Series: 00000000-0000-4000-8005-{tmdbId 12 hex}
+//   Trakt List:    00000000-0000-4000-8006-{md5(list slug) first 12 hex}
+//   Stremio Search:    md5(stremio:item:{mediaType}:{meta id}) 32 hex
+//   Stremio Source:    md5(stremio:source:{mediaType}:{meta id}) 32 hex
+//   Stremio Season:    00000000-0000-4000-8008-{md5(series id/season) last 12 hex}
+//   Stremio Episode:   00000000-0000-4000-8009-{md5(series id/episode id) last 12 hex}
 
 const MOVIES_FOLDER_ID = 'a0000000-0000-4000-8000-000000000001'
 const SHOWS_FOLDER_ID  = 'a0000000-0000-4000-8000-000000000002'
+const SEARCH_MOVIES_FOLDER_ID = '6e3fa3433af84ddce606b8387c27c8dc'
+const SEARCH_SHOWS_FOLDER_ID = '540fa55606a1dbbda35514d7177920dc'
 const COLLECTIONS_FOLDER_ID = 'a0000000-0000-4000-8007-000000000001'
 const SERVER_GUID      = 'a0000000-0000-0000-0000-000000000001'
 // Keep old name as alias so existing code still compiles
@@ -38,6 +46,7 @@ const FOLDER_ID = MOVIES_FOLDER_ID
 const API_LIBRARY_FILTER = { availableOnly: true as const }
 const READ_CACHE_TTL_MS = 3_000
 const IMAGE_PROXY_TTL_MS = 60 * 60 * 1000
+const STREMIO_SEARCH_CACHE_TTL_MS = 30 * 60 * 1000
 const PLAYED_COMPLETION_THRESHOLD = 0.95
 const NEXT_UP_PROGRESS_THRESHOLD = 0.60
 const JELLYFIN_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
@@ -48,6 +57,9 @@ const jellyfinTokens = new Map<string, { userId: string; expiresAt: number }>()
 const loginAttempts = new Map<string, { count: number; resetAt: number }>()
 const proxiedImageCache = new Map<string, { buffer: Buffer; contentType: string; expiresAt: number }>()
 const traktCollectionSummaryCache = new Map<string, { expiresAt: number; summaries: TraktCollectionSummary[] }>()
+const stremioSearchCache = new Map<string, { meta: StremioMeta; mediaType: StremioMediaType; itemId: string; sourceId: string; expiresAt: number }>()
+const stremioSeasonCache = new Map<string, { series: StremioMeta; seasonNumber: number; expiresAt: number }>()
+const stremioEpisodeCache = new Map<string, { series: StremioMeta; episode: StremioMeta; expiresAt: number }>()
 type JellyfinRouteOptions = {
   prewarmPlayback?: (playPath: string, label: string) => void
   registerPlaybackItem?: (itemId: string, playPath: string) => void
@@ -111,6 +123,67 @@ function idToTraktCollectionSlug(id: string): string | null {
   const m = id.match(/^00000000-0000-4000-8006-([0-9a-f]{12})$/i)
   if (!m) return null
   return config.traktLists.find(slug => traktCollectionSlugToId(slug) === id) ?? null
+}
+
+function stremioSearchMetaIds(meta: StremioMeta, mediaType: StremioMediaType): { itemId: string; sourceId: string } {
+  const itemId = createHash('md5').update(`stremio:item:${mediaType}:${meta.id}`).digest('hex')
+  const sourceId = createHash('md5').update(`stremio:source:${mediaType}:${meta.id}`).digest('hex')
+  const cached = { meta, mediaType, itemId, sourceId, expiresAt: Date.now() + STREMIO_SEARCH_CACHE_TTL_MS }
+  stremioSearchCache.set(itemId, cached)
+  stremioSearchCache.set(sourceId, cached)
+  return { itemId, sourceId }
+}
+
+function stremioSearchMetaToId(meta: StremioMeta, mediaType: StremioMediaType): string {
+  return stremioSearchMetaIds(meta, mediaType).itemId
+}
+
+function idToStremioSearchMeta(id: string): { meta: StremioMeta; mediaType: StremioMediaType; itemId: string; sourceId: string; requestedId: string } | null {
+  if (!/^(?:[0-9a-f]{32}|00000000-0000-4000-(?:8007|8010)-[0-9a-f]{12})$/i.test(id)) return null
+  const cached = stremioSearchCache.get(id)
+  if (!cached) return null
+  if (cached.expiresAt <= Date.now()) {
+    stremioSearchCache.delete(cached.itemId)
+    stremioSearchCache.delete(cached.sourceId)
+    return null
+  }
+  return { meta: cached.meta, mediaType: cached.mediaType, itemId: cached.itemId, sourceId: cached.sourceId, requestedId: id }
+}
+
+function stremioSeasonToId(series: StremioMeta, seasonNumber: number): string {
+  const hash = createHash('md5').update(`stremio-season:${series.id}:${seasonNumber}`).digest('hex')
+  const id = `00000000-0000-4000-8008-${hash.slice(-12)}`
+  stremioSeasonCache.set(id, { series, seasonNumber, expiresAt: Date.now() + STREMIO_SEARCH_CACHE_TTL_MS })
+  return id
+}
+
+function idToStremioSeason(id: string): { series: StremioMeta; seasonNumber: number } | null {
+  if (!/^00000000-0000-4000-8008-[0-9a-f]{12}$/i.test(id)) return null
+  const cached = stremioSeasonCache.get(id)
+  if (!cached) return null
+  if (cached.expiresAt <= Date.now()) {
+    stremioSeasonCache.delete(id)
+    return null
+  }
+  return { series: cached.series, seasonNumber: cached.seasonNumber }
+}
+
+function stremioEpisodeToId(series: StremioMeta, episode: StremioMeta): string {
+  const hash = createHash('md5').update(`stremio-episode:${series.id}:${episode.id || episode.season}:${episode.episode || episode.number}`).digest('hex')
+  const id = `00000000-0000-4000-8009-${hash.slice(-12)}`
+  stremioEpisodeCache.set(id, { series, episode, expiresAt: Date.now() + STREMIO_SEARCH_CACHE_TTL_MS })
+  return id
+}
+
+function idToStremioEpisode(id: string): { series: StremioMeta; episode: StremioMeta } | null {
+  if (!/^00000000-0000-4000-8009-[0-9a-f]{12}$/i.test(id)) return null
+  const cached = stremioEpisodeCache.get(id)
+  if (!cached) return null
+  if (cached.expiresAt <= Date.now()) {
+    stremioEpisodeCache.delete(id)
+    return null
+  }
+  return { series: cached.series, episode: cached.episode }
 }
 
 function seasonToId(showTmdbId: number, seasonNum: number): string {
@@ -279,6 +352,11 @@ async function sendImageUrl(
 }
 
 function runtimeTicksForItem(itemId: string): number | null {
+  const stremioEpisode = idToStremioEpisode(itemId)
+  if (stremioEpisode) return stremioRuntimeTicks(stremioEpisode.episode, 45)
+  const stremioSearch = idToStremioSearchMeta(itemId)
+  if (stremioSearch?.mediaType === 'movie') return stremioRuntimeTicks(stremioSearch.meta, 90)
+
   const epRef = idToEpisode(itemId)
   if (epRef) {
     const episode = getEpisodesForSeason(epRef.showTmdbId, epRef.seasonNum)
@@ -756,6 +834,324 @@ function showToSearchSeriesItem(s: Show) {
   }
 }
 
+function stremioMetaName(meta: StremioMeta): string {
+  return meta.name || meta.title || meta.id
+}
+
+function stremioMetaYear(meta: StremioMeta): number | undefined {
+  if (typeof meta.year === 'number') return meta.year
+  if (typeof meta.year === 'string') {
+    const parsed = Number.parseInt(meta.year, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  const releaseInfo = String(meta.releaseInfo ?? '')
+  const match = releaseInfo.match(/\b(19\d{2}|20\d{2})\b/)
+  return match ? Number.parseInt(match[1], 10) : undefined
+}
+
+function stremioRuntimeTicks(meta: StremioMeta, fallbackMins: number): number {
+  const runtime = String(meta.runtime ?? '')
+  const hours = runtime.match(/(\d+)\s*h/i)
+  const minutes = runtime.match(/(\d+)\s*m/i)
+  const plainMinutes = runtime.match(/^\s*(\d+)\s*$/)
+  const totalMins = hours || minutes
+    ? (hours ? Number.parseInt(hours[1], 10) * 60 : 0) + (minutes ? Number.parseInt(minutes[1], 10) : 0)
+    : plainMinutes ? Number.parseInt(plainMinutes[1], 10) : fallbackMins
+  return totalMins * 60 * 10_000_000
+}
+
+function stremioMetaExternalUrls(meta: StremioMeta, mediaType: StremioMediaType) {
+  const urls = []
+  const imdbId = meta.imdb_id || meta.imdbId || (meta.id.startsWith('tt') ? meta.id : '')
+  if (imdbId) urls.push({ Name: 'IMDb', Url: `https://www.imdb.com/title/${imdbId}` })
+  if (meta.id.startsWith('tmdb:')) {
+    urls.push({
+      Name: 'TMDB',
+      Url: `https://www.themoviedb.org/${mediaType === 'series' ? 'tv' : 'movie'}/${meta.id.slice(5)}`,
+    })
+  }
+  return urls
+}
+
+function stremioStubPath(id: string): string {
+  return `gelato://stub/${id}`
+}
+
+function stremioSearchTypeLabel(includeTypes: string): string {
+  if (!includeTypes) return 'Movie,Series'
+  const labels = [
+    includeTypes.includes('movie') ? 'Movie' : '',
+    includeTypes.includes('series') ? 'Series' : '',
+  ].filter(Boolean)
+  return labels.length ? labels.join(',') : includeTypes
+}
+
+function searchCollectionFolderToItem(id: string, name: string, collectionType: 'movies' | 'tvshows') {
+  return {
+    Name:                     name,
+    Id:                       id,
+    ServerId:                 SERVER_GUID,
+    Etag:                     createHash('md5').update(`search-folder:${id}:etag`).digest('hex'),
+    DateCreated:              new Date().toISOString(),
+    DateLastMediaAdded:       '0001-01-01T00:00:00.0000000Z',
+    CanDelete:                false,
+    CanDownload:              false,
+    SortName:                 name.toLowerCase(),
+    ExternalUrls:             [],
+    Path:                     `/var/lib/jellyfin/root/default/${name}`,
+    EnableMediaSourceDisplay: true,
+    ChannelId:                null,
+    Taglines:                 [],
+    Genres:                   [],
+    PlayAccess:               'Full',
+    RemoteTrailers:           [],
+    ProviderIds:              {},
+    IsFolder:                 true,
+    ParentId:                 null,
+    Type:                     'CollectionFolder',
+    People:                   [],
+    Studios:                  [],
+    GenreItems:               [],
+    LocalTrailerCount:        0,
+    UserData: {
+      PlaybackPositionTicks: 0,
+      PlayCount: 0,
+      IsFavorite: false,
+      Played: false,
+      Key: id,
+      ItemId: id,
+    },
+    ChildCount:               1,
+    SpecialFeatureCount:      0,
+    DisplayPreferencesId:     id,
+    Tags:                     [],
+    CollectionType:           collectionType,
+    ImageTags:                {},
+    BackdropImageTags:        [],
+    ImageBlurHashes:          {},
+    LocationType:             'FileSystem',
+    MediaType:                'Unknown',
+    LockedFields:             [],
+    LockData:                 false,
+  }
+}
+
+function stremioSearchMetaToItem(meta: StremioMeta, mediaType: StremioMediaType, requestedId?: string) {
+  const { itemId, sourceId } = stremioSearchMetaIds(meta, mediaType)
+  const id = requestedId ?? itemId
+  const name = stremioMetaName(meta)
+  const genres = meta.genres ?? meta.genre ?? []
+  const runtimeTicks = stremioRuntimeTicks(meta, mediaType === 'movie' ? 90 : 45)
+  const path = stremioStubPath(meta.id)
+  const primaryTag = meta.poster ? createHash('md5').update(meta.poster).digest('hex') : undefined
+  const logoTag = meta.logo ? createHash('sha1').update(meta.logo).digest('hex').slice(0, 16) : undefined
+  const isMovie = mediaType === 'movie'
+  const year = stremioMetaYear(meta)
+  const date = meta.released ? `${meta.released.slice(0, 10)}T00:00:00.0000000Z` : year ? `${year}-01-01T00:00:00.0000000Z` : undefined
+  const externalUrls = meta.id.startsWith('tmdb:')
+    ? [{ Name: 'TMDB', Url: `https://www.themoviedb.org/${mediaType === 'series' ? 'tv' : 'movie'}/${meta.id.slice(5)}` }]
+    : stremioMetaExternalUrls(meta, mediaType)
+  return {
+    Id:                 id,
+    ServerId:           SERVER_GUID,
+    Name:               name,
+    SortName:           name.replace(/^(the|a|an)\s+/i, '').toLowerCase(),
+    Type:               isMovie ? 'Movie' : 'Series',
+    MediaType:          isMovie ? 'Video' : undefined,
+    VideoType:          isMovie ? 'VideoFile' : undefined,
+    LocationType:       'Remote',
+    CanDelete:          false,
+    CanDownload:        isMovie,
+    ChannelId:          null,
+    ProductionYear:     year,
+    Overview:           meta.overview || meta.description,
+    Genres:             genres,
+    GenreItems:         genreItems(genres),
+    Tags:               [],
+    CommunityRating:    undefined,
+    ExternalUrls:       externalUrls,
+    DateCreated:        new Date().toISOString(),
+    PremiereDate:       date,
+    EndDate:            date,
+    Etag:               createHash('md5').update(`stremio:etag:${mediaType}:${meta.id}`).digest('hex'),
+    DisplayPreferencesId: createHash('md5').update(`stremio:display:${mediaType}:${meta.id}`).digest('hex'),
+    IsFolder:           !isMovie,
+    Path:               path,
+    EnableMediaSourceDisplay: isMovie ? true : undefined,
+    Chapters:           isMovie ? [] : undefined,
+    LocalTrailerCount:  isMovie ? 0 : undefined,
+    LockData:           false,
+    LockedFields:       [],
+    MediaStreams:       isMovie ? [] : undefined,
+    People:             [],
+    ProductionLocations: [],
+    RemoteTrailers:     [],
+    SpecialFeatureCount: isMovie ? 0 : undefined,
+    Studios:            [],
+    Taglines:           [],
+    Trickplay:          {},
+    ChildCount:         isMovie ? undefined : (meta.videos?.length ?? 0),
+    RecursiveItemCount: isMovie ? undefined : (meta.videos?.length ?? 0),
+    ImageTags:          {
+      ...(primaryTag ? { Primary: primaryTag } : {}),
+      ...(logoTag ? { Logo: logoTag } : {}),
+    },
+    PrimaryImageAspectRatio: primaryTag ? 0.6666666666666666 : undefined,
+    ImageBlurHashes:    primaryTag ? { Primary: { [primaryTag]: 'L00000fQfQ00fQfQfQfQ~qj[j[fQ' } } : { Primary: {} },
+    BackdropImageTags:  [],
+    ParentId:           null,
+    ProviderIds:        {
+      ...(meta.id.startsWith('tmdb:') ? { Tmdb: meta.id.slice(5) } : {}),
+      Stremio: meta.id,
+    },
+    MediaSources:       isMovie ? [{
+      Protocol:             'Http',
+      Id:                   sourceId,
+      Type:                 'Default',
+      Name:                 name,
+      Path:                 path,
+      IsRemote:             false,
+      SupportsTranscoding:  true,
+      SupportsDirectStream: true,
+      SupportsDirectPlay:   true,
+      SupportsProbing:      true,
+      HasSegments:          false,
+      VideoType:            'VideoFile',
+      MediaStreams:         [],
+      MediaAttachments:     [],
+      RequiredHttpHeaders:  {},
+      Formats:              [],
+      ReadAtNativeFramerate: false,
+      GenPtsInput:          false,
+      IgnoreDts:            false,
+      IgnoreIndex:          false,
+      RequiresLooping:      false,
+      TranscodingSubProtocol: 'http',
+      UseMostCompatibleTranscodingProfile: false,
+      IsInfiniteStream:     false,
+      RequiresOpening:      false,
+      RequiresClosing:      false,
+    }] : undefined,
+  }
+}
+
+function stremioEpisodeSeasonNumber(ep: StremioMeta): number {
+  return ep.season ?? 1
+}
+
+function stremioEpisodeNumber(ep: StremioMeta): number {
+  return ep.episode ?? ep.number ?? 1
+}
+
+function stremioSeriesSeasons(series: StremioMeta[]) {
+  return [...new Set(series.map(stremioEpisodeSeasonNumber).filter(n => Number.isFinite(n) && n > 0))].sort((a, b) => a - b)
+}
+
+function stremioSeasonToItem(series: StremioMeta, seasonNumber: number) {
+  const id = stremioSeasonToId(series, seasonNumber)
+  const seriesId = stremioSearchMetaToId(series, 'series')
+  const episodes = (series.videos ?? []).filter(ep => stremioEpisodeSeasonNumber(ep) === seasonNumber)
+  return {
+    Id:             id,
+    ServerId:       SERVER_GUID,
+    Name:           `Season ${seasonNumber}`,
+    SeriesName:     stremioMetaName(series),
+    SeriesId:       seriesId,
+    Type:           'Season',
+    LocationType:   'Virtual',
+    IndexNumber:    seasonNumber,
+    ParentIndexNumber: seasonNumber,
+    ParentId:       seriesId,
+    IsFolder:       true,
+    ChildCount:     episodes.length,
+    RecursiveItemCount: episodes.length,
+    ImageTags:      series.poster ? { Primary: createHash('sha1').update(series.poster).digest('hex').slice(0, 16) } : {},
+    UserData:       userDataForItem(id, { played: false, playCount: 0, positionTicks: 0, lastPlayedDate: '' }),
+  }
+}
+
+function stremioEpisodeToItem(series: StremioMeta, episode: StremioMeta) {
+  const id = stremioEpisodeToId(series, episode)
+  const seasonNumber = stremioEpisodeSeasonNumber(episode)
+  const episodeNumber = stremioEpisodeNumber(episode)
+  const seasonId = stremioSeasonToId(series, seasonNumber)
+  const seriesId = stremioSearchMetaToId(series, 'series')
+  const name = stremioMetaName(episode) || `Episode ${episodeNumber}`
+  const runtimeTicks = stremioRuntimeTicks(episode, 45)
+  const path = stremioStubPath(episode.id || `${series.id}:${seasonNumber}:${episodeNumber}`)
+  return {
+    Id:                 id,
+    ServerId:           SERVER_GUID,
+    Name:               name,
+    SeriesName:         stremioMetaName(series),
+    SeriesId:           seriesId,
+    SeasonId:           seasonId,
+    Type:               'Episode',
+    MediaType:          'Video',
+    VideoType:          'VideoFile',
+    LocationType:       'Remote',
+    PlayAccess:         'Full',
+    IsPlayable:         true,
+    CanDownload:        true,
+    IsFolder:           false,
+    IndexNumber:        episodeNumber,
+    ParentIndexNumber:  seasonNumber,
+    ParentId:           seasonId,
+    Overview:           episode.overview || episode.description,
+    ProductionYear:     stremioMetaYear(episode) ?? stremioMetaYear(series),
+    RunTimeTicks:       runtimeTicks,
+    Path:               path,
+    EnableMediaSourceDisplay: true,
+    ImageTags:          (episode.poster || series.poster) ? { Primary: createHash('sha1').update(episode.poster || series.poster || '').digest('hex').slice(0, 16) } : {},
+    ProviderIds:        { Stremio: episode.id || `${series.id}:${seasonNumber}:${episodeNumber}` },
+    UserData:           userDataForItem(id, { played: false, playCount: 0, positionTicks: 0, lastPlayedDate: '' }, runtimeTicks),
+    MediaSources: [{
+      Protocol:             'Http',
+      Id:                   id,
+      Type:                 'Default',
+      Container:            'mkv',
+      Size:                 0,
+      Name:                 name,
+      Path:                 path,
+      IsRemote:             false,
+      RunTimeTicks:         runtimeTicks,
+      SupportsTranscoding:  true,
+      SupportsDirectStream: true,
+      SupportsDirectPlay:   true,
+      SupportsProbing:      true,
+      HasSegments:          false,
+      VideoType:            'VideoFile',
+      IsInfiniteStream:     false,
+      RequiresOpening:      false,
+      RequiresClosing:      false,
+    }],
+  }
+}
+
+function stremioSearchMetaToHint(meta: StremioMeta, mediaType: StremioMediaType) {
+  const { sourceId } = stremioSearchMetaIds(meta, mediaType)
+  const year = stremioMetaYear(meta)
+  const released = meta.released || (year ? `${year}-01-01` : '')
+  const posterTag = meta.poster ? createHash('sha1').update(meta.poster).digest('hex').slice(0, 16) : undefined
+  const backdropTag = meta.background ? createHash('sha1').update(meta.background).digest('hex').slice(0, 16) : undefined
+  return {
+    ItemId:       sourceId,
+    Id:           sourceId,
+    Name:         stremioMetaName(meta),
+    ProductionYear: year,
+    PrimaryImageTag: posterTag,
+    BackdropImageTag: backdropTag,
+    BackdropImageItemId: sourceId,
+    Type:         mediaType === 'movie' ? 'Movie' : 'Series',
+    RunTimeTicks: mediaType === 'movie' ? stremioRuntimeTicks(meta, 90) : undefined,
+    MediaType:    mediaType === 'movie' ? 'Video' : undefined,
+    EndDate:      released ? `${released.slice(0, 10)}T00:00:00.0000000Z` : undefined,
+    Artists:      [],
+    ChannelId:    null,
+    PrimaryImageAspectRatio: posterTag ? 0.6666666666666666 : undefined,
+  }
+}
+
 function visibleSeasonsForShow(show: Show): Season[] {
   const seasons = getSeasonsForShow(show.tmdbId)
   const showMode = getEffectiveShowMode(show.tmdbId)
@@ -854,6 +1250,115 @@ function compareEpisodeOrder(a: Pick<Episode, 'seasonNumber' | 'episodeNumber'>,
   return a.episodeNumber - b.episodeNumber
 }
 
+function isStremioErrorMeta(meta: StremioMeta): boolean {
+  return stremioMetaName(meta).startsWith('[❌]')
+}
+
+interface TmdbSearchResult {
+  id: number
+  title?: string
+  name?: string
+  overview?: string
+  poster_path?: string | null
+  backdrop_path?: string | null
+  release_date?: string
+  first_air_date?: string
+  genre_ids?: number[]
+}
+
+interface TmdbExternalIds {
+  imdb_id?: string | null
+}
+
+const TMDB_GENRES: Record<number, string> = {
+  12: 'Adventure',
+  14: 'Fantasy',
+  16: 'Animation',
+  18: 'Drama',
+  27: 'Horror',
+  28: 'Action',
+  35: 'Comedy',
+  36: 'History',
+  37: 'Western',
+  53: 'Thriller',
+  80: 'Crime',
+  99: 'Documentary',
+  878: 'Science Fiction',
+  9648: 'Mystery',
+  10402: 'Music',
+  10749: 'Romance',
+  10751: 'Family',
+  10752: 'War',
+  10759: 'Action & Adventure',
+  10762: 'Kids',
+  10763: 'News',
+  10764: 'Reality',
+  10765: 'Sci-Fi & Fantasy',
+  10766: 'Soap',
+  10767: 'Talk',
+  10768: 'War & Politics',
+  10770: 'TV Movie',
+}
+
+async function fetchTmdbImdbId(type: StremioMediaType, tmdbId: number): Promise<string | undefined> {
+  if (!config.tmdbApiKey || !Number.isFinite(tmdbId)) return undefined
+  const endpoint = type === 'movie' ? 'movie' : 'tv'
+  const url = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}/external_ids?api_key=${encodeURIComponent(config.tmdbApiKey)}`
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    if (!res.ok) return undefined
+    const json = await res.json() as TmdbExternalIds
+    return json.imdb_id || undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function enrichStremioMetasWithImdbIds(metas: StremioMeta[]): Promise<StremioMeta[]> {
+  return Promise.all(metas.map(async meta => {
+    if (meta.imdb_id || meta.imdbId || meta.id.startsWith('tt') || !meta.id.startsWith('tmdb:')) return meta
+    const tmdbId = Number.parseInt(meta.id.slice(5), 10)
+    if (!Number.isFinite(tmdbId)) return meta
+    const mediaType = String(meta.type ?? 'movie').toLowerCase() === 'series' ? 'series' : 'movie'
+    const imdbId = await fetchTmdbImdbId(mediaType, tmdbId)
+    return imdbId ? { ...meta, imdb_id: imdbId } : meta
+  }))
+}
+
+async function searchTmdbStremioFallback(searchTerm: string, types: StremioMediaType[]): Promise<StremioMeta[]> {
+  if (!config.tmdbApiKey || !searchTerm.trim()) return []
+  const metas: StremioMeta[] = []
+  await Promise.all(types.map(async type => {
+    const endpoint = type === 'movie' ? 'movie' : 'tv'
+    const url = `https://api.themoviedb.org/3/search/${endpoint}?api_key=${encodeURIComponent(config.tmdbApiKey)}&query=${encodeURIComponent(searchTerm)}&include_adult=false`
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+      if (!res.ok) return
+      const json = await res.json() as { results?: TmdbSearchResult[] }
+      const typeMetas = await Promise.all((json.results ?? []).map(async result => {
+        const imdbId = await fetchTmdbImdbId(type, result.id)
+        return {
+          id: `tmdb:${result.id}`,
+          type,
+          name: type === 'movie' ? result.title : result.name,
+          title: type === 'movie' ? result.title : result.name,
+          imdb_id: imdbId,
+          poster: result.poster_path ?? undefined,
+          background: result.backdrop_path ?? undefined,
+          overview: result.overview,
+          year: Number.parseInt((result.release_date || result.first_air_date || '').slice(0, 4), 10) || undefined,
+          released: result.release_date || result.first_air_date,
+          genres: (result.genre_ids ?? []).map(id => TMDB_GENRES[id]).filter(Boolean),
+        } satisfies StremioMeta
+      }))
+      metas.push(...typeMetas)
+    } catch {
+      // Search fallback is opportunistic; local/Stremio results still work without it.
+    }
+  }))
+  return metas
+}
+
 async function buildSearchResultItems(
   searchTerm: string,
   includeTypes: string,
@@ -865,7 +1370,20 @@ async function buildSearchResultItems(
 ) {
   const wantMovies = !includeTypes || includeTypes.includes('movie')
   const wantShows = !includeTypes || includeTypes.includes('series')
+  const stremioTypes: StremioMediaType[] = [
+    ...(wantMovies ? ['movie' as const] : []),
+    ...(wantShows ? ['series' as const] : []),
+  ]
 
+  const rawStremioMetas = stremioTypes.length
+    ? await searchStremioMetas(searchTerm, stremioTypes).catch(() => [])
+    : []
+  const validStremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
+  const stremioMetas = await enrichStremioMetasWithImdbIds(
+    validStremioMetas.length || !stremioTypes.length
+      ? validStremioMetas
+      : await searchTmdbStremioFallback(searchTerm, stremioTypes)
+  )
   const localMovies = wantMovies
     ? filterMoviesForUser(user, listMovies({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
     : []
@@ -873,9 +1391,32 @@ async function buildSearchResultItems(
     ? filterShowsForUser(user, listShows({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
     : []
 
+  const localMovieIds = new Set(localMovies.map(movie => movie.tmdbId))
+  const localShowIds = new Set(localShows.map(show => show.tmdbId))
+  const localMovieImdbIds = new Set(localMovies.map(movie => movie.imdbId).filter(Boolean))
+  const localShowImdbIds = new Set(localShows.map(show => show.imdbId).filter(Boolean))
+
+  const stremioSearchItems = stremioMetas
+    .filter(meta => {
+      const mediaType = String(meta.type ?? '').toLowerCase() as StremioMediaType
+      if (mediaType !== 'movie' && mediaType !== 'series') return false
+      const tmdbId = meta.id.startsWith('tmdb:') ? Number.parseInt(meta.id.slice(5), 10) : NaN
+      const imdbId = meta.imdb_id || meta.imdbId || (meta.id.startsWith('tt') ? meta.id : '')
+      if (mediaType === 'movie') {
+        if (Number.isFinite(tmdbId) && localMovieIds.has(tmdbId)) return false
+        if (imdbId && localMovieImdbIds.has(imdbId)) return false
+      } else {
+        if (Number.isFinite(tmdbId) && localShowIds.has(tmdbId)) return false
+        if (imdbId && localShowImdbIds.has(imdbId)) return false
+      }
+      return true
+    })
+    .map(meta => stremioSearchMetaToItem(meta, String(meta.type ?? 'movie').toLowerCase() === 'series' ? 'series' : 'movie'))
+
   const combined = [
     ...localMovies.map(movie => movieToItem(movie, user.id)),
     ...localShows.map(show => showToSeriesItem(show, user.id)),
+    ...stremioSearchItems,
   ]
 
   return {
@@ -1111,6 +1652,16 @@ function jellyfinUser(user: AppUser) {
 // ── Route registration ────────────────────────────────────────────────────────
 
 export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOptions = {}) {
+  app.addHook('onResponse', async (req, reply) => {
+    const url = req.url.replace(/([?&](?:api_key|access_token|token)=)[^&]+/gi, '$1...')
+    const authHeader = req.headers['x-emby-authorization']
+    const authText = Array.isArray(authHeader) ? authHeader.join(' ') : (authHeader ?? '')
+    const userAgent = req.headers['user-agent'] ?? ''
+    const isInfuse = `${authText} ${userAgent}`.toLowerCase().includes('infuse')
+    const isSearchish = /search|SearchTerm|IncludeItemTypes|ParentId|Views|VirtualFolders|GroupingOptions|SelectableMediaFolders/i.test(url)
+    if (!isInfuse && !isSearchish) return
+    app.log.info(`jellyfin-request: ${req.method} ${url} status=${reply.statusCode}`)
+  })
 
   function requireJellyfinUser(
     headers: Record<string, string | string[] | undefined>,
@@ -1159,6 +1710,13 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     CustomPrefs:      {},
     Client:           'emby',
   }))
+
+  const emptySearchBucket = () => ({ Items: [], TotalRecordCount: 0, StartIndex: 0 })
+  app.get('/Persons', async () => emptySearchBucket())
+  app.get('/Artists', async () => emptySearchBucket())
+  app.get('/Artists/AlbumArtists', async () => emptySearchBucket())
+  app.get('/Genres', async () => emptySearchBucket())
+  app.get('/Studios', async () => emptySearchBucket())
 
   // Auth — verify app user credentials for Jellyfin-compatible clients
   app.post('/Users/AuthenticateByName', async (req, reply) => {
@@ -1209,20 +1767,27 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
 
   // Library sections
   app.get('/Library/VirtualFolders', async () => ([
+    { Name: 'Search Movies', CollectionType: 'movies', ItemId: SEARCH_MOVIES_FOLDER_ID, Locations: ['/search/movies'] },
+    { Name: 'Search Shows',  CollectionType: 'tvshows', ItemId: SEARCH_SHOWS_FOLDER_ID,  Locations: ['/search/shows'] },
     { Name: 'Movies', CollectionType: 'movies', ItemId: MOVIES_FOLDER_ID, Locations: ['/movies'] },
     { Name: 'Shows',  CollectionType: 'tvshows', ItemId: SHOWS_FOLDER_ID,  Locations: ['/shows'] },
     ...(config.traktCollections
       ? [{ Name: 'Collections', CollectionType: 'boxsets', ItemId: COLLECTIONS_FOLDER_ID, Locations: ['/collections'] }]
       : []),
   ]))
+  app.get('/Library/SelectableMediaFolders', async () => null)
 
   // Grouping options
   app.get('/Users/:id/GroupingOptions', async () => ([
+    { Name: 'Search Movies', Id: SEARCH_MOVIES_FOLDER_ID, Type: 'movies' },
+    { Name: 'Search Shows',  Id: SEARCH_SHOWS_FOLDER_ID,  Type: 'tvshows' },
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
   ]))
   app.get('/UserViews/GroupingOptions', async () => ([
+    { Name: 'Search Movies', Id: SEARCH_MOVIES_FOLDER_ID, Type: 'movies' },
+    { Name: 'Search Shows',  Id: SEARCH_SHOWS_FOLDER_ID,  Type: 'tvshows' },
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
@@ -1233,6 +1798,8 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const moviesCount = filterMoviesForUser(user, listMovies({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })).length
     const showsCount = filterShowsForUser(user, listShows({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })).length
     const items = [
+      searchCollectionFolderToItem(SEARCH_MOVIES_FOLDER_ID, 'Search Movies', 'movies'),
+      searchCollectionFolderToItem(SEARCH_SHOWS_FOLDER_ID, 'Search Shows', 'tvshows'),
       {
         Name:               'Movies',
         Id:                 MOVIES_FOLDER_ID,
@@ -1297,6 +1864,20 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const limit           = q.limit ? parseInt(q.limit) : 10_000
     const offset          = parseInt(q.startindex ?? '0')
 
+    if (ParentId === SEARCH_MOVIES_FOLDER_ID) {
+      if (!SearchTerm) return { Items: [], TotalRecordCount: 0, StartIndex: offset }
+      const result = await buildSearchResultItems(SearchTerm, 'movie', SortBy, SortOrder, limit, offset, user)
+      app.log.info(`Intercepted /Items search "${SearchTerm}" types=[Movie] start=${offset} limit=${limit} results=${result.TotalRecordCount}`)
+      return result
+    }
+
+    if (ParentId === SEARCH_SHOWS_FOLDER_ID) {
+      if (!SearchTerm) return { Items: [], TotalRecordCount: 0, StartIndex: offset }
+      const result = await buildSearchResultItems(SearchTerm, 'series', SortBy, SortOrder, limit, offset, user)
+      app.log.info(`Intercepted /Items search "${SearchTerm}" types=[Series] start=${offset} limit=${limit} results=${result.TotalRecordCount}`)
+      return result
+    }
+
     // ── Shows folder ───────────────────────────────────────────────────────────
     if (ParentId === SHOWS_FOLDER_ID) {
       // Infuse scans the library with three separate recursive queries:
@@ -1333,7 +1914,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       }
       // Default: series list
       if (SearchTerm) {
-        return buildSearchResultItems(SearchTerm, 'series', SortBy, SortOrder, limit, offset, user)
+        const result = await buildSearchResultItems(SearchTerm, 'series', SortBy, SortOrder, limit, offset, user)
+        app.log.info(`Intercepted /Items search "${SearchTerm}" types=[Series] start=${offset} limit=${limit} results=${result.TotalRecordCount}`)
+        return result
       }
       const allShows = filterShowsForUser(user, listShows({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
       return { Items: pagedItems(allShows, offset, limit).map(show => showToSeriesItem(show, user.id)), TotalRecordCount: allShows.length, StartIndex: offset }
@@ -1352,6 +1935,17 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
 
     // ── Season ID: list episodes ───────────────────────────────────────────────
+    const stremioSeasonRef = ParentId ? idToStremioSeason(ParentId) : null
+    if (stremioSeasonRef) {
+      const episodes = (stremioSeasonRef.series.videos ?? [])
+        .filter(ep => stremioEpisodeSeasonNumber(ep) === stremioSeasonRef.seasonNumber)
+      return {
+        Items: pagedItems(episodes, offset, limit).map(ep => stremioEpisodeToItem(stremioSeasonRef.series, ep)),
+        TotalRecordCount: episodes.length,
+        StartIndex: offset,
+      }
+    }
+
     const seasonRef = ParentId ? idToSeason(ParentId) : null
     if (seasonRef) {
       if (isLibraryItemHidden('show', seasonRef.showTmdbId)) return { Items: [], TotalRecordCount: 0, StartIndex: offset }
@@ -1374,6 +1968,10 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
 
+    if (ParentId === SEARCH_MOVIES_FOLDER_ID || ParentId === SEARCH_SHOWS_FOLDER_ID) {
+      return { Items: [], TotalRecordCount: 0, StartIndex: offset }
+    }
+
     if (ParentId === COLLECTIONS_FOLDER_ID && config.traktCollections) {
       const collections = traktCollectionItemsForUser(user)
       return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
@@ -1390,7 +1988,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
 
     // ── Search: movies + shows ─────────────────────────────────────────────────
     if (SearchTerm) {
-      return buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user)
+      const result = await buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user)
+      app.log.info(`Intercepted /Items search "${SearchTerm}" types=[${stremioSearchTypeLabel(includeTypes)}] start=${offset} limit=${limit} results=${result.TotalRecordCount}`)
+      return result
     }
 
     // ── No parentId: route by includeItemTypes or return folders ─────────────
@@ -1435,7 +2035,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return { Items: [], TotalRecordCount: 0, StartIndex: offset }
     }
     if (SearchTerm) {
-      return buildSearchResultItems(SearchTerm, 'movie', SortBy, SortOrder, limit, offset, user)
+      const result = await buildSearchResultItems(SearchTerm, 'movie', SortBy, SortOrder, limit, offset, user)
+      app.log.info(`Intercepted /Items search "${SearchTerm}" types=[Movie] start=${offset} limit=${limit} results=${result.TotalRecordCount}`)
+      return result
     }
     const movies = filterMoviesForUser(user, listMovies({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
     return { Items: pagedItems(movies, offset, limit).map(movie => movieToItem(movie, user.id)), TotalRecordCount: movies.length, StartIndex: offset }
@@ -1462,10 +2064,29 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return { SearchHints: [], TotalRecordCount: 0 }
     }
 
-    const results = await buildSearchResultItems(SearchTerm, includeTypes, undefined, undefined, limit, offset, user)
+    const wantMovies = !includeTypes || includeTypes.includes('movie')
+    const wantShows = !includeTypes || includeTypes.includes('series')
+    const stremioTypes: StremioMediaType[] = [
+      ...(wantMovies ? ['movie' as const] : []),
+      ...(wantShows ? ['series' as const] : []),
+    ]
+    const rawStremioMetas = stremioTypes.length
+      ? await searchStremioMetas(SearchTerm, stremioTypes).catch(() => [])
+      : []
+    const validStremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
+    const stremioMetas = await enrichStremioMetasWithImdbIds(
+      validStremioMetas.length || !stremioTypes.length
+        ? validStremioMetas
+        : await searchTmdbStremioFallback(SearchTerm, stremioTypes)
+    )
+    const hints = stremioMetas
+      .map(meta => {
+        const mediaType = String(meta.type ?? 'movie').toLowerCase() === 'series' ? 'series' : 'movie'
+        return stremioSearchMetaToHint(meta, mediaType)
+      })
     return {
-      SearchHints: results.Items,
-      TotalRecordCount: results.TotalRecordCount,
+      SearchHints: pagedItems(hints, offset, limit),
+      TotalRecordCount: hints.length,
     }
   }
 
@@ -1575,6 +2196,12 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (id === COLLECTIONS_FOLDER_ID && config.traktCollections) {
       return traktCollectionsFolderToItem(currentUser)
     }
+    if (id === SEARCH_MOVIES_FOLDER_ID) {
+      return searchCollectionFolderToItem(SEARCH_MOVIES_FOLDER_ID, 'Search Movies', 'movies')
+    }
+    if (id === SEARCH_SHOWS_FOLDER_ID) {
+      return searchCollectionFolderToItem(SEARCH_SHOWS_FOLDER_ID, 'Search Shows', 'tvshows')
+    }
 
     const collectionSlug = idToTraktCollectionSlug(id)
     if (collectionSlug && config.traktCollections) {
@@ -1614,7 +2241,16 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return seasonToItem(season, show, currentUser.id)
     }
 
+    const stremioEpisode = idToStremioEpisode(id)
+    if (stremioEpisode) return stremioEpisodeToItem(stremioEpisode.series, stremioEpisode.episode)
+
+    const stremioSeason = idToStremioSeason(id)
+    if (stremioSeason) return stremioSeasonToItem(stremioSeason.series, stremioSeason.seasonNumber)
+
     // Series
+    const stremioSearch = idToStremioSearchMeta(id)
+    if (stremioSearch) return stremioSearchMetaToItem(stremioSearch.meta, stremioSearch.mediaType, stremioSearch.requestedId)
+
     const searchShowTmdbId = idToSearchShowTmdb(id)
     if (searchShowTmdbId) {
       const show = await fetchShowByTmdbId(searchShowTmdbId)
@@ -1666,6 +2302,15 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const user = requestUser(req.headers)
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
     const { seriesId } = req.params as { seriesId: string }
+    const stremioSeries = idToStremioSearchMeta(seriesId)
+    if (stremioSeries?.mediaType === 'series') {
+      const seasonNumbers = stremioSeriesSeasons(stremioSeries.meta.videos ?? [])
+      return {
+        Items: seasonNumbers.map(seasonNumber => stremioSeasonToItem(stremioSeries.meta, seasonNumber)),
+        TotalRecordCount: seasonNumbers.length,
+        StartIndex: 0,
+      }
+    }
     const searchShowTmdbId = idToSearchShowTmdb(seriesId)
     if (searchShowTmdbId) return { Items: [], TotalRecordCount: 0, StartIndex: 0 }
     return withReadCache(`show-seasons:${user.id}:${seriesId}`, async () => {
@@ -1688,6 +2333,18 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const { seriesId } = req.params as { seriesId: string }
     const rawQ = (req as never as { query: Record<string, string> }).query
     const SeasonId = rawQ.SeasonId ?? rawQ.seasonId ?? rawQ.seasonid
+    const stremioSeries = idToStremioSearchMeta(seriesId)
+    if (stremioSeries?.mediaType === 'series') {
+      const stremioSeason = SeasonId ? idToStremioSeason(SeasonId) : null
+      const episodes = stremioSeason
+        ? (stremioSeries.meta.videos ?? []).filter(ep => stremioEpisodeSeasonNumber(ep) === stremioSeason.seasonNumber)
+        : (stremioSeries.meta.videos ?? [])
+      return {
+        Items: episodes.map(ep => stremioEpisodeToItem(stremioSeries.meta, ep)),
+        TotalRecordCount: episodes.length,
+        StartIndex: 0,
+      }
+    }
     const searchShowTmdbId = idToSearchShowTmdb(seriesId)
     if (searchShowTmdbId) return { Items: [], TotalRecordCount: 0, StartIndex: 0 }
     return withReadCache(`show-episodes:${user.id}:${seriesId}:${SeasonId ?? 'all'}`, async () => {
@@ -1735,6 +2392,28 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const representative = bestRootFolderImage(id, rootFolderUser)
       if (!representative) return reply.code(404).send()
       return sendImageUrl(reply, headers, representative.path, representative.kind, query)
+    }
+
+    const stremioEpisode = idToStremioEpisode(id)
+    if (stremioEpisode) {
+      const path = stremioEpisode.episode.poster || stremioEpisode.series.poster
+      if (path) return sendImageUrl(reply, headers, path, 'poster', query)
+      return reply.code(404).send()
+    }
+
+    const stremioSeason = idToStremioSeason(id)
+    if (stremioSeason) {
+      if (stremioSeason.series.poster) return sendImageUrl(reply, headers, stremioSeason.series.poster, 'poster', query)
+      return reply.code(404).send()
+    }
+
+    const stremioSearch = idToStremioSearchMeta(id)
+    if (stremioSearch) {
+      const { meta } = stremioSearch
+      if (isLogo && meta.logo) return sendImageUrl(reply, headers, meta.logo, 'logo', query)
+      if ((isThumb || isBackdrop) && meta.background) return sendImageUrl(reply, headers, meta.background, 'backdrop', query)
+      if (meta.poster) return sendImageUrl(reply, headers, meta.poster, 'poster', query)
+      return reply.code(404).send()
     }
 
     const collectionSlug = idToTraktCollectionSlug(id)
@@ -1915,6 +2594,77 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
     const { id } = req.params
 
+    const stremioEpisode = idToStremioEpisode(id)
+    if (stremioEpisode) {
+      const { series, episode } = stremioEpisode
+      const externalId = episode.id || `${series.id}:${stremioEpisodeSeasonNumber(episode)}:${stremioEpisodeNumber(episode)}`
+      const playPath = `/play/stremio/series/${encodeURIComponent(externalId)}`
+      const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
+      const name = `${stremioMetaName(series)} - ${stremioMetaName(episode)}`
+      const runtimeTicks = stremioRuntimeTicks(episode, 45)
+      app.log.info(`playback: Stremio "${name}" → ${playUrl}`)
+      opts.registerPlaybackItem?.(id, playPath)
+      opts.prewarmPlayback?.(playPath, name)
+      return {
+        MediaSources: [{
+          Id:                   id,
+          Name:                 name,
+          Type:                 'Default',
+          Protocol:             'Http',
+          Path:                 playUrl,
+          IsRemote:             true,
+          SupportsDirectPlay:   true,
+          SupportsDirectStream: true,
+          SupportsTranscoding:  false,
+          RequiresOpening:      false,
+          RequiresClosing:      false,
+          Container:            'mkv',
+          RunTimeTicks:         runtimeTicks,
+          MediaStreams: [
+            { Type: 'Video', Index: 0, Codec: 'h264', IsDefault: true },
+            { Type: 'Audio', Index: 1, Codec: 'aac',  IsDefault: true, Language: 'eng' },
+          ],
+        }],
+        PlaySessionId: `fetcherr-${id}`,
+      }
+    }
+
+    const stremioSearch = idToStremioSearchMeta(id)
+    if (stremioSearch) {
+      const { meta, mediaType, sourceId } = stremioSearch
+      if (mediaType !== 'movie') return reply.code(404).send({ error: 'Not found' })
+      const externalId = meta.imdb_id || meta.imdbId || meta.id
+      const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(externalId)}`
+      const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)
+      const name = stremioMetaName(meta)
+      const runtimeTicks = stremioRuntimeTicks(meta, 90)
+      app.log.info(`playback: Stremio "${name}" → ${playUrl}`)
+      opts.registerPlaybackItem?.(id, playPath)
+      opts.prewarmPlayback?.(playPath, name)
+      return {
+        MediaSources: [{
+          Id:                   sourceId,
+          Name:                 name,
+          Type:                 'Default',
+          Protocol:             'Http',
+          Path:                 playUrl,
+          IsRemote:             true,
+          SupportsDirectPlay:   true,
+          SupportsDirectStream: true,
+          SupportsTranscoding:  false,
+          RequiresOpening:      false,
+          RequiresClosing:      false,
+          Container:            'mkv',
+          RunTimeTicks:         runtimeTicks,
+          MediaStreams: [
+            { Type: 'Video', Index: 0, Codec: 'h264', IsDefault: true },
+            { Type: 'Audio', Index: 1, Codec: 'aac',  IsDefault: true, Language: 'eng' },
+          ],
+        }],
+        PlaySessionId: `fetcherr-${sourceId}`,
+      }
+    }
+
     // Episode playback
     const epRef = idToEpisode(id)
     if (epRef) {
@@ -2007,6 +2757,23 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
 
     const { id } = req.params as { id: string }
     const origin = buildPlaybackOrigin(req.headers as Record<string, string | undefined>)
+
+    const stremioEpisode = idToStremioEpisode(id)
+    if (stremioEpisode) {
+      const { series, episode } = stremioEpisode
+      const externalId = episode.id || `${series.id}:${stremioEpisodeSeasonNumber(episode)}:${stremioEpisodeNumber(episode)}`
+      const playPath = `/play/stremio/series/${encodeURIComponent(externalId)}`
+      return reply.redirect(createSignedPlaybackUrl(origin, playPath), 302)
+    }
+
+    const stremioSearch = idToStremioSearchMeta(id)
+    if (stremioSearch) {
+      const { meta, mediaType } = stremioSearch
+      if (mediaType !== 'movie') return reply.code(404).send()
+      const externalId = meta.imdb_id || meta.imdbId || meta.id
+      const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(externalId)}`
+      return reply.redirect(createSignedPlaybackUrl(origin, playPath), 302)
+    }
 
     const epRef = idToEpisode(id)
     if (epRef) {
