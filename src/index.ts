@@ -618,7 +618,13 @@ async function resolvePlayableStream(
     const orderedStreams = streams
       .map((stream, index) => ({ stream, index }))
       .sort((a, b) => {
+        const aHash = extractHashFromStream(a.stream)
+        const bHash = extractHashFromStream(b.stream)
         if (allowDirectUrls) {
+          if (activeDebridProviderName()) {
+            if (aHash && !bHash) return -1
+            if (!aHash && bHash) return 1
+          }
           const aDirectUrl = isDirectPlaybackUrl(a.stream.url)
           const bDirectUrl = isDirectPlaybackUrl(b.stream.url)
           if (aDirectUrl && !bDirectUrl) return -1
@@ -637,8 +643,6 @@ async function resolvePlayableStream(
             return directPlaybackPenalty(a.stream) - directPlaybackPenalty(b.stream) || a.index - b.index
           }
         }
-        const aHash = extractHashFromStream(a.stream)
-        const bHash = extractHashFromStream(b.stream)
         const aDirect = !aHash && isDirectPlaybackUrl(a.stream.url)
         const bDirect = !bHash && isDirectPlaybackUrl(b.stream.url)
         if (aHash && !bHash) return -1
@@ -663,41 +667,45 @@ async function resolvePlayableStream(
         const hint = streamFilenameHint(stream) ?? fileHint
         if (allowDirectUrls && isDirectPlaybackUrl(stream.url)) {
           const activeProvider = activeDebridProviderName()
-          const useDirectUrl = !activeProvider || directStreamMatchesActiveDebrid(stream)
-          if (!useDirectUrl) {
-            if (directStreamConflictsWithActiveDebrid(stream) && !hash) {
-              app.log.info(`play: skipping direct Stremio stream for ${label}, marked for another debrid provider while ${activeProvider} is active`)
-              continue
-            }
-            if (hash) {
-              const reason = directStreamConflictsWithActiveDebrid(stream) ? 'provider-mismatched' : 'unmarked'
-              app.log.info(`play: deferring ${reason} direct Stremio stream for ${label} to ${activeProvider} hash resolver`)
-            } else {
-              app.log.info(`play: skipping unverified direct Stremio stream for ${label} while ${activeProvider} is active, no torrent hash exposed`)
-              continue
-            }
+          if (activeProvider && hash) {
+            app.log.info(`play: resolving Stremio hash ${hashLabel}… for ${label} through ${activeProvider} cleanup-managed resolver`)
           } else {
-            const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
-            if (directFilename && !isVideoFile(directFilename)) {
-              app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
-              continue
+            const useDirectUrl = !activeProvider || directStreamMatchesActiveDebrid(stream)
+            if (!useDirectUrl) {
+              if (directStreamConflictsWithActiveDebrid(stream) && !hash) {
+                app.log.info(`play: skipping direct Stremio stream for ${label}, marked for another debrid provider while ${activeProvider} is active`)
+                continue
+              }
+              if (hash) {
+                const reason = directStreamConflictsWithActiveDebrid(stream) ? 'provider-mismatched' : 'unmarked'
+                app.log.info(`play: deferring ${reason} direct Stremio stream for ${label} to ${activeProvider} hash resolver`)
+              } else {
+                app.log.info(`play: skipping unverified direct Stremio stream for ${label} while ${activeProvider} is active, no torrent hash exposed`)
+                continue
+              }
+            } else {
+              const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
+              if (directFilename && !isVideoFile(directFilename)) {
+                app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
+                continue
+              }
+              if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
+                app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
+                continue
+              }
+              if (
+                directFilename
+                && config.englishStreamMode === 'require'
+                && isRemoteAudioProbeUnreliable(directFilename)
+                && !streamClearlyEnglish(stream)
+              ) {
+                app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed English metadata`)
+                continue
+              }
+              app.log.info(`play: direct Stremio stream selected for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
+              clearFailedPlay(cacheKey)
+              return { url: stream.url, filename: directFilename, provider: providerLabel }
             }
-            if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
-              app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
-              continue
-            }
-            if (
-              directFilename
-              && config.englishStreamMode === 'require'
-              && isRemoteAudioProbeUnreliable(directFilename)
-              && !streamClearlyEnglish(stream)
-            ) {
-              app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed English metadata`)
-              continue
-            }
-            app.log.info(`play: direct Stremio stream selected for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
-            clearFailedPlay(cacheKey)
-            return { url: stream.url, filename: directFilename, provider: providerLabel }
           }
         }
 
