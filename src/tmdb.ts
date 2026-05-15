@@ -11,9 +11,19 @@ const BASE = 'https://api.themoviedb.org/3'
 const MISSING_STILL_RETRY_MS = 7 * 24 * 60 * 60 * 1000
 const ACTIVE_SHOW_REFRESH_MS = 6 * 60 * 60 * 1000
 
+const LANG_LOCALE: Record<string, string> = {
+  en: 'en-US', pt: 'pt-BR', ja: 'ja-JP', es: 'es-ES',
+  fr: 'fr-FR', de: 'de-DE', it: 'it-IT', ko: 'ko-KR', zh: 'zh-CN',
+}
+
+export function tmdbLocale(): string {
+  const lang = config.preferredAudioLanguage || 'en'
+  return LANG_LOCALE[lang] ?? lang
+}
+
 async function tmdbGet(path: string): Promise<unknown> {
   const sep = path.includes('?') ? '&' : '?'
-  const res = await fetch(`${BASE}${path}${sep}api_key=${config.tmdbApiKey}`, {
+  const res = await fetch(`${BASE}${path}${sep}api_key=${config.tmdbApiKey}&language=${tmdbLocale()}`, {
     signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) throw new Error(`TMDB ${res.status} for ${path}`)
@@ -228,7 +238,7 @@ export async function fetchMovieCollection(movieTmdbId: number): Promise<MovieCo
     const collection = movie.belongs_to_collection
     if (!collection?.id) return []
 
-    const raw = await tmdbGet(`/collection/${collection.id}?language=en-US`) as TmdbCollectionRaw
+    const raw = await tmdbGet(`/collection/${collection.id}`) as TmdbCollectionRaw
     return (raw.parts ?? [])
       .sort((a, b) => (a.release_date || '').localeCompare(b.release_date || '') || a.title.localeCompare(b.title))
       .map(part => ({

@@ -55,6 +55,11 @@ export type AudioLanguage =
 
 export type EnglishStreamMode = 'off' | 'prefer' | 'require'
 export type DirectPlaybackMode = 'off' | 'torrentsOnly' | 'all'
+export type StreamRankingMode = 'fetcherr' | 'provider'
+
+export function parseStreamRankingMode(value: string | undefined): StreamRankingMode {
+  return value === 'provider' ? 'provider' : 'fetcherr'
+}
 export type TorBoxPlaybackMode = 'proxy' | 'requestdlRedirect'
 export type ShowAddDefaultMode = 'all' | 'latest'
 export type MovieReleaseMode = 'digital' | 'theatrical'
@@ -135,10 +140,12 @@ export const config = {
   movieReleaseMode: parseMovieReleaseMode(process.env.MOVIE_RELEASE_MODE),
   streamProviderUrls: parseStreamProviderUrls(process.env.STREAM_PROVIDER_URLS ?? ''),
   stremioSearchProviderUrls: parseStreamProviderUrls(process.env.STREMIO_SEARCH_PROVIDER_URLS ?? ''),
+  stremioSearchEnabled: parseBooleanSetting(process.env.STREMIO_SEARCH_ENABLED, false),
   musicAddonUrls: parseMusicAddonUrls(process.env.MUSIC_ADDON_URLS ?? process.env.MUSIC_ADDON_URL ?? process.env.SPOTIFLAC_URL ?? ''),
   preferredAudioLanguage: parseAudioLanguage(process.env.PREFERRED_AUDIO_LANGUAGE),
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),
   directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
   torBoxPlaybackMode: parseTorBoxPlaybackMode(process.env.TORBOX_PLAYBACK_MODE),
+  streamRankingMode: parseStreamRankingMode(process.env.STREAM_RANKING_MODE),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),
 }

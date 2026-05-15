@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from '../config.js'
+import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
@@ -700,16 +700,13 @@ export async function uiRoutes(app: FastifyInstance) {
   app.get('/ui/settings-data', async (req, reply) => {
     if (!requireAdmin(req, reply as never)) return
     reply.header('Cache-Control', 'no-store')
-    const activeDebridProvider = getSetting('activeDebridProvider') === 'tb' ? 'tb' : 'rd'
-    const rdStreamProviderUrls = getSetting('rdStreamProviderUrls') ?? getSetting('streamProviderUrls') ?? ''
-    const torBoxStreamProviderUrls = getSetting('torBoxStreamProviderUrls') ?? ''
     return {
       sootioUrl:         config.sootioUrl,
       streamProviderUrls: config.streamProviderUrls.join('\n'),
-      rdStreamProviderUrls,
-      torBoxStreamProviderUrls,
       preferredAudioLanguage: config.preferredAudioLanguage,
       englishStreamMode: config.englishStreamMode,
+      streamRankingMode: config.streamRankingMode,
+      stremioSearchEnabled: config.stremioSearchEnabled,
       serverUrl:         config.serverUrl,
       traktClientId:     config.traktClientId,
       traktWatchlistMovies: config.traktWatchlistMovies,
@@ -724,7 +721,6 @@ export async function uiRoutes(app: FastifyInstance) {
       hasSootioUrl:      !!getSetting('sootioUrl'),
       hasRdApiKey:       !!getSetting('rdApiKey'),
       hasTorBoxApiKey:   !!getSetting('torBoxApiKey'),
-      activeDebridProvider,
       hasTmdbApiKey:     !!getSetting('tmdbApiKey'),
       hasTvdbApiKey:     !!getSetting('tvdbApiKey'),
       hasTraktClientSecret: !!getSetting('traktClientSecret'),
@@ -803,8 +799,6 @@ export async function uiRoutes(app: FastifyInstance) {
         config[key] = val as never
       }
     }
-    const activeDebridProvider = body.activeDebridProvider === 'tb' ? 'tb' : 'rd'
-    setSetting('activeDebridProvider', activeDebridProvider)
     if (typeof body.rdApiKey === 'string') {
       setSetting('rdApiKey', body.rdApiKey.trim())
     }
@@ -813,20 +807,18 @@ export async function uiRoutes(app: FastifyInstance) {
     }
     const storedRdApiKey = getSetting('rdApiKey') || ''
     const storedTorBoxApiKey = getSetting('torBoxApiKey') || ''
-    config.rdApiKey = activeDebridProvider === 'rd' ? storedRdApiKey : ''
-    config.torBoxApiKey = activeDebridProvider === 'tb' ? storedTorBoxApiKey : ''
-    if (typeof body.rdStreamProviderUrls === 'string') {
-      setSetting('rdStreamProviderUrls', parseStreamProviderUrls(body.rdStreamProviderUrls).join('\n'))
-    }
-    if (typeof body.torBoxStreamProviderUrls === 'string') {
-      setSetting('torBoxStreamProviderUrls', parseStreamProviderUrls(body.torBoxStreamProviderUrls).join('\n'))
-    }
+    config.rdApiKey = storedRdApiKey
+    config.torBoxApiKey = storedTorBoxApiKey
     if (typeof body.streamProviderUrls === 'string') {
-      const settingKey = activeDebridProvider === 'tb' ? 'torBoxStreamProviderUrls' : 'rdStreamProviderUrls'
-      setSetting(settingKey, parseStreamProviderUrls(body.streamProviderUrls).join('\n'))
+      setSetting('streamProviderUrls', parseStreamProviderUrls(body.streamProviderUrls).join('\n'))
+      setSetting('rdStreamProviderUrls', '')
+      setSetting('torBoxStreamProviderUrls', '')
     }
-    const activeStreamProviderSetting = activeDebridProvider === 'tb' ? 'torBoxStreamProviderUrls' : 'rdStreamProviderUrls'
-    config.streamProviderUrls = parseStreamProviderUrls(getSetting(activeStreamProviderSetting) ?? '')
+    config.streamProviderUrls = collectStreamProviderUrls(
+      getSetting('rdStreamProviderUrls') ?? '',
+      getSetting('torBoxStreamProviderUrls') ?? '',
+      getSetting('streamProviderUrls') ?? '',
+    )
     config.stremioSearchProviderUrls = collectStreamProviderUrls(
       getSetting('rdStreamProviderUrls') ?? '',
       getSetting('torBoxStreamProviderUrls') ?? '',
@@ -838,6 +830,16 @@ export async function uiRoutes(app: FastifyInstance) {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
       config.englishStreamMode = mode
+    }
+    if (typeof body.streamRankingMode === 'string') {
+      const mode = parseStreamRankingMode(body.streamRankingMode)
+      setSetting('streamRankingMode', mode)
+      config.streamRankingMode = mode
+    }
+    if (body.stremioSearchEnabled != null) {
+      const enabled = parseBooleanSetting(String(body.stremioSearchEnabled), false)
+      setSetting('stremioSearchEnabled', enabled ? 'true' : 'false')
+      config.stremioSearchEnabled = enabled
     }
     if (typeof body.preferredAudioLanguage === 'string') {
       const language = parseAudioLanguage(body.preferredAudioLanguage)

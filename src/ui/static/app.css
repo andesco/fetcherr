@@ -2526,14 +2526,9 @@ body.auth-page::after {
     width: 100%;
   }
 
-  .provider-row,
   .input-row {
     grid-template-columns: 1fr;
     flex-direction: column;
-  }
-
-  .provider-row {
-    display: grid;
   }
 
   .status-row {

@@ -59,12 +59,12 @@
   <section class="section" id="streams">
     <div class="section-title">Stream Add-ons</div>
     <div class="field">
-      <label for="streamProviderList">Add-ons <span id="streamProviderScope" class="muted"></span></label>
+      <label for="streamProviderList">Add-ons</label>
       <div id="streamProviderList" class="provider-list"></div>
       <div class="provider-actions">
         <button type="button" class="btn btn-sm" onclick="addProviderRow()">+ Add Add-on</button>
       </div>
-      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are saved separately for Real-Debrid and TorBox and also feed Stremio search results.</div>
+      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are shared across all debrid providers and also feed Stremio search results.</div>
     </div>
     <div class="field">
       <label for="preferredAudioLanguage">Preferred Audio Language</label>
@@ -93,40 +93,43 @@
       </select>
       <div class="field-note">Prefer uses provider metadata as a quality tie-breaker. Require verifies neutral probeable files with ffprobe before playback.</div>
     </div>
+    <div class="field">
+      <label for="streamRankingMode">Stream Ranking</label>
+      <select id="streamRankingMode">
+        <option value="fetcherr">Fetcherr — rank by quality, cache status, and language</option>
+        <option value="provider">Provider order — use add-on results as-is</option>
+      </select>
+      <div class="field-note">Use Provider order when your add-on (e.g. AIOStreams with SEL) has already ranked streams. Fetcherr re-ranking can conflict with add-on sorting.</div>
+    </div>
+    <div class="field">
+      <label>Beta Features</label>
+      <label class="check-item">
+        <input type="checkbox" id="stremioSearchEnabled">
+        <span>Enable Search folders in Infuse (Beta) — shows Search Movies and Search Shows libraries powered by your add-ons and TMDB</span>
+      </label>
+    </div>
   </section>
 
   <!-- Debrid -->
   <section class="section" id="debrid">
     <div class="section-title">Debrid</div>
-    <div class="field-note debrid-intro">Choose Real-Debrid or TorBox. Fetcherr keeps both saved credentials, but only the selected provider is active for playback.</div>
-    <div class="tabs debrid-tabs" role="tablist" aria-label="Debrid provider settings">
-      <button type="button" id="debridTabRd" class="tab active" role="tab" aria-selected="true" aria-controls="debridPanelRd" onclick="setDebridProvider('rd')">
-        Real-Debrid <span id="rdConfigState" class="config-state" hidden></span>
-      </button>
-      <button type="button" id="debridTabTb" class="tab" role="tab" aria-selected="false" aria-controls="debridPanelTb" onclick="setDebridProvider('tb')">
-        TorBox <span id="tbConfigState" class="config-state" hidden></span>
-      </button>
-    </div>
-
-    <div id="debridPanelRd" class="debrid-panel" role="tabpanel" aria-labelledby="debridTabRd">
+    <div class="field-note debrid-intro" id="debridIntroNote">Configure one or both debrid providers. When both are active, stream markers ([TB+] / [RD+]) determine which provider resolves each stream.</div>
+    <div class="field-grid field">
       <div class="field">
-        <label for="rdApiKey">Real-Debrid API Key</label>
+        <label for="rdApiKey">Real-Debrid API Key <span id="rdConfigState" class="config-state" hidden></span></label>
         <div class="input-row">
           <input id="rdApiKey" type="password" placeholder="Enter your Real-Debrid API key" oninput="onApiKeyInput('rd')">
           <button id="rdValidateBtn" class="btn btn-sm" onclick="validateRD()" hidden>Validate</button>
         </div>
-        <div class="field-note">Use Real-Debrid as the debrid resolver for cached torrent playback.</div>
+        <div class="field-note">Real-Debrid resolves cached torrent streams for playback.</div>
       </div>
-    </div>
-
-    <div id="debridPanelTb" class="debrid-panel" role="tabpanel" aria-labelledby="debridTabTb" hidden>
       <div class="field">
-        <label for="torBoxApiKey">TorBox API Key</label>
+        <label for="torBoxApiKey">TorBox API Key <span id="tbConfigState" class="config-state" hidden></span></label>
         <div class="input-row">
           <input id="torBoxApiKey" type="password" placeholder="Enter your TorBox API key" oninput="onApiKeyInput('tb')">
           <button id="tbValidateBtn" class="btn btn-sm" onclick="validateTorBox()" hidden>Validate</button>
         </div>
-        <div class="field-note">Use TorBox as the debrid resolver for cached torrent playback.</div>
+        <div class="field-note">TorBox resolves cached torrent streams for playback.</div>
       </div>
     </div>
   </section>
@@ -369,9 +372,6 @@
   let hasStoredTvdbApiKey = false
   let hasStoredTraktClientSecret = false
   let hasStoredMdblistApiKey = false
-  let activeDebridProvider = 'rd'
-  let rdStreamProviderUrls = []
-  let torBoxStreamProviderUrls = []
   let managedUsers = []
   let deletedUserIds = new Set()
   let userModalMode = 'create'
@@ -410,17 +410,6 @@
     return result
   }
 
-  function rememberVisibleProviderRows() {
-    const list = document.getElementById('streamProviderList')
-    if (!list || !list.children.length) return
-    if (activeDebridProvider === 'tb') torBoxStreamProviderUrls = collectProviderUrls()
-    else rdStreamProviderUrls = collectProviderUrls()
-  }
-
-  function providerRowsForActiveDebrid() {
-    return activeDebridProvider === 'tb' ? torBoxStreamProviderUrls : rdStreamProviderUrls
-  }
-
   function providerRemoveButtonHtml() {
     return `
       <button type="button" class="btn-remove provider-remove-btn" title="Remove add-on" aria-label="Remove add-on" onclick="promptRemoveProviderRow(this)">
@@ -433,8 +422,6 @@
 
   function renderProviderRows(urls = []) {
     const list = document.getElementById('streamProviderList')
-    const scope = document.getElementById('streamProviderScope')
-    if (scope) scope.textContent = activeDebridProvider === 'tb' ? '(TorBox)' : '(Real-Debrid)'
     const values = urls.length ? urls : ['']
     list.innerHTML = values.map((url, idx) => `
       <div class="provider-row">
@@ -562,16 +549,14 @@
     if (!cfg) return
     const input = document.getElementById(cfg.inputId)
     const button = document.getElementById(cfg.buttonId)
-    const isDebrid = service === 'rd' || service === 'tb'
-    const isActiveDebrid = !isDebrid || service === activeDebridProvider
     const hasNewValue = input.value.trim().length > 0
-    input.disabled = !isActiveDebrid
-    button.hidden = !hasNewValue || !isActiveDebrid
-    button.disabled = !isActiveDebrid
+    input.disabled = false
+    button.hidden = !hasNewValue
+    button.disabled = false
 
-    if (hasNewValue && isActiveDebrid) {
+    if (hasNewValue) {
       setConfigStateBadge(service, 'Needs Validation', 'pending')
-    } else if (cfg.hasStored() && isActiveDebrid) {
+    } else if (cfg.hasStored()) {
       setConfigStateBadge(service, 'Connected', 'ok')
     } else {
       setConfigStateBadge(service, '', '')
@@ -580,29 +565,6 @@
 
   function onApiKeyInput(service) {
     setApiStoredStatus(service)
-  }
-
-  function setDebridProvider(provider, options = {}) {
-    if (options.remember !== false) rememberVisibleProviderRows()
-    activeDebridProvider = provider === 'tb' ? 'tb' : 'rd'
-    const rdActive = activeDebridProvider === 'rd'
-    const rdTab = document.getElementById('debridTabRd')
-    const tbTab = document.getElementById('debridTabTb')
-    const rdPanel = document.getElementById('debridPanelRd')
-    const tbPanel = document.getElementById('debridPanelTb')
-    rdTab.classList.toggle('active', rdActive)
-    tbTab.classList.toggle('active', !rdActive)
-    rdTab.setAttribute('aria-selected', String(rdActive))
-    tbTab.setAttribute('aria-selected', String(!rdActive))
-    rdPanel.hidden = !rdActive
-    tbPanel.hidden = rdActive
-    document.getElementById('rdApiKey').disabled = !rdActive
-    document.getElementById('rdValidateBtn').disabled = !rdActive
-    document.getElementById('torBoxApiKey').disabled = rdActive
-    document.getElementById('tbValidateBtn').disabled = rdActive
-    setApiStoredStatus('rd')
-    setApiStoredStatus('tb')
-    renderProviderRows(providerRowsForActiveDebrid())
   }
 
   function setMdblistStoredStatus() {
@@ -632,16 +594,13 @@
     hasStoredTvdbApiKey = !!d.hasTvdbApiKey
     hasStoredTraktClientSecret = !!d.hasTraktClientSecret
     hasStoredMdblistApiKey = !!d.hasMdblistApiKey
-    activeDebridProvider = d.activeDebridProvider || (hasStoredTorBoxApiKey && !hasStoredRdApiKey ? 'tb' : 'rd')
-    rdStreamProviderUrls = uniqueProviderUrls((d.rdStreamProviderUrls || d.streamProviderUrls || '').split('\n'))
-    torBoxStreamProviderUrls = uniqueProviderUrls((d.torBoxStreamProviderUrls || '').split('\n'))
+    let streamProviderUrls = uniqueProviderUrls((d.streamProviderUrls || '').split('\n'))
     const legacyAddonUrl = String(d.sootioUrl || '').trim()
-    if (legacyAddonUrl) {
-      if (activeDebridProvider === 'tb') torBoxStreamProviderUrls = uniqueProviderUrls([legacyAddonUrl, ...torBoxStreamProviderUrls])
-      else rdStreamProviderUrls = uniqueProviderUrls([legacyAddonUrl, ...rdStreamProviderUrls])
-    }
+    if (legacyAddonUrl) streamProviderUrls = uniqueProviderUrls([legacyAddonUrl, ...streamProviderUrls])
     document.getElementById('preferredAudioLanguage').value = d.preferredAudioLanguage || 'en'
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
+    document.getElementById('streamRankingMode').value = d.streamRankingMode || 'fetcherr'
+    document.getElementById('stremioSearchEnabled').checked = !!d.stremioSearchEnabled
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
     setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
     setSecretPlaceholder('tmdbApiKey', hasStoredTmdbApiKey, 'Enter your TMDB API key')
@@ -662,7 +621,9 @@
     deletedUserIds = new Set()
     renderUsers()
 
-    setDebridProvider(activeDebridProvider, { remember: false })
+    renderProviderRows(streamProviderUrls)
+    setApiStoredStatus('rd')
+    setApiStoredStatus('tb')
     setApiStoredStatus('tmdb')
     setApiStoredStatus('tvdb')
     setMdblistStoredStatus()
@@ -1010,7 +971,6 @@
   }
 
   async function saveSettings() {
-    rememberVisibleProviderRows()
     const rdApiKey = document.getElementById('rdApiKey').value
     const torBoxApiKey = document.getElementById('torBoxApiKey').value
     const tmdbApiKey = document.getElementById('tmdbApiKey').value
@@ -1019,12 +979,11 @@
     const mdblistApiKey = document.getElementById('mdblistApiKey').value
     const body = {
       sootioUrl:         '',
-      streamProviderUrls: providerRowsForActiveDebrid().join('\n'),
-      rdStreamProviderUrls: rdStreamProviderUrls.join('\n'),
-      torBoxStreamProviderUrls: torBoxStreamProviderUrls.join('\n'),
+      streamProviderUrls: collectProviderUrls().join('\n'),
       preferredAudioLanguage: document.getElementById('preferredAudioLanguage').value,
       englishStreamMode: document.getElementById('englishStreamMode').value,
-      activeDebridProvider,
+      streamRankingMode: document.getElementById('streamRankingMode').value,
+      stremioSearchEnabled: document.getElementById('stremioSearchEnabled').checked,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,
       movieReleaseMode: document.getElementById('movieReleaseMode').value,
@@ -1035,8 +994,8 @@
       traktCollections: document.getElementById('traktCollections').checked,
       traktLists:        selectedTraktLists,
       mdblistLists: document.getElementById('mdblistLists').value,
-      ...(activeDebridProvider === 'rd' && rdApiKey ? { rdApiKey } : {}),
-      ...(activeDebridProvider === 'tb' && torBoxApiKey ? { torBoxApiKey } : {}),
+      ...(rdApiKey ? { rdApiKey } : {}),
+      ...(torBoxApiKey ? { torBoxApiKey } : {}),
       ...(tmdbApiKey ? { tmdbApiKey } : {}),
       ...(tvdbApiKey ? { tvdbApiKey } : {}),
       ...(traktClientSecret ? { traktClientSecret } : {}),

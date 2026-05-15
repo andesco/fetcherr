@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream'
 import Fastify from 'fastify'
-import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseTraktLists } from './config.js'
+import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -76,6 +76,8 @@ getDb()
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
   if (s.preferredAudioLanguage != null) config.preferredAudioLanguage = parseAudioLanguage(s.preferredAudioLanguage)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
+  if (s.streamRankingMode != null) config.streamRankingMode = parseStreamRankingMode(s.streamRankingMode)
+  if (s.stremioSearchEnabled != null) config.stremioSearchEnabled = parseBooleanSetting(s.stremioSearchEnabled, false)
   config.stremioSearchProviderUrls = collectStreamProviderUrls(
     s.rdStreamProviderUrls ?? '',
     s.torBoxStreamProviderUrls ?? '',
@@ -83,16 +85,16 @@ getDb()
     config.sootioUrl,
     config.stremioSearchProviderUrls.join('\n'),
   )
-  const activeDebridProvider = s.activeDebridProvider === 'tb'
-    ? 'tb'
-    : config.torBoxApiKey && !config.rdApiKey
-      ? 'tb'
-      : 'rd'
-  if (activeDebridProvider === 'tb') {
-    config.rdApiKey = ''
+  const bothConfigured = Boolean(config.rdApiKey && config.torBoxApiKey)
+  if (bothConfigured) {
+    config.streamProviderUrls = collectStreamProviderUrls(
+      s.rdStreamProviderUrls ?? '',
+      s.torBoxStreamProviderUrls ?? '',
+      s.streamProviderUrls ?? '',
+    )
+  } else if (config.torBoxApiKey) {
     config.streamProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? '')
   } else {
-    config.torBoxApiKey = ''
     config.streamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
   }
 }
@@ -463,6 +465,46 @@ function streamClearlyUsenetBacked(stream: { name?: string; title?: string; desc
   return /\busenet\b|\bnewznab\b/.test(text)
 }
 
+function streamClearlyTorBoxCached(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  const text = streamMetadataText(stream)
+  return /\btorbox\s*\(\s*(instant|cached)\s*\)|\binstant\s*\(\s*tb\s*\)|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|\bready\s*\(\s*tb\s*\)/.test(text)
+}
+
+function streamClearlyRealDebridCached(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  const text = streamMetadataText(stream)
+  return /\breal[-\s]?debrid\s*\(\s*(instant|cached)\s*\)|\binstant\s*\(\s*rd\s*\)|\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\bready\s*\(\s*rd\s*\)/.test(text)
+}
+
+function activeDebridIsTorBox(): boolean {
+  return Boolean(config.torBoxApiKey)
+}
+
+function activeDebridIsRealDebrid(): boolean {
+  return Boolean(config.rdApiKey)
+}
+
+function activeDebridProviderName(): 'RD' | 'TorBox' | null {
+  if (activeDebridIsRealDebrid()) return 'RD'
+  if (activeDebridIsTorBox()) return 'TorBox'
+  return null
+}
+
+function directStreamMatchesActiveDebrid(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  const hasBoth = activeDebridIsRealDebrid() && activeDebridIsTorBox()
+  if (hasBoth) return true
+  if (activeDebridIsRealDebrid()) return streamClearlyRealDebridCached(stream) || !streamClearlyTorBoxCached(stream)
+  if (activeDebridIsTorBox()) return streamClearlyTorBoxCached(stream) || !streamClearlyRealDebridCached(stream)
+  return true
+}
+
+function directStreamConflictsWithActiveDebrid(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  const hasBoth = activeDebridIsRealDebrid() && activeDebridIsTorBox()
+  if (hasBoth) return false
+  if (activeDebridIsRealDebrid()) return streamClearlyTorBoxCached(stream) && !streamClearlyRealDebridCached(stream)
+  if (activeDebridIsTorBox()) return streamClearlyRealDebridCached(stream) && !streamClearlyTorBoxCached(stream)
+  return false
+}
+
 function directPlaybackPenalty(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown>; url?: string }): number {
   if (!isDirectPlaybackUrl(stream.url)) return 0
   const text = streamMetadataText(stream)
@@ -576,21 +618,46 @@ async function resolvePlayableStream(
     const failedRdHashes = new Map<string, string>()
     const failedTorBoxHashes = new Map<string, string>()
     app.log.info(`play: trying ${streams.length} ranked candidate${streams.length === 1 ? '' : 's'} for ${label}`)
-    const orderedStreams = streams
-      .map((stream, index) => ({ stream, index }))
-      .sort((a, b) => {
-        const aHash = extractHashFromStream(a.stream)
-        const bHash = extractHashFromStream(b.stream)
-        const aDirect = !aHash && isDirectPlaybackUrl(a.stream.url)
-        const bDirect = !bHash && isDirectPlaybackUrl(b.stream.url)
-        if (aHash && !bHash) return -1
-        if (!aHash && bHash) return 1
-        if (aDirect && bDirect) {
-          return directPlaybackPenalty(a.stream) - directPlaybackPenalty(b.stream) || a.index - b.index
-        }
-        return a.index - b.index
-      })
-      .map(entry => entry.stream)
+    const orderedStreams = config.streamRankingMode === 'provider'
+      ? streams
+      : streams
+          .map((stream, index) => ({ stream, index }))
+          .sort((a, b) => {
+            const aHash = extractHashFromStream(a.stream)
+            const bHash = extractHashFromStream(b.stream)
+            if (allowDirectUrls) {
+              if (activeDebridProviderName()) {
+                if (aHash && !bHash) return -1
+                if (!aHash && bHash) return 1
+              }
+              const aDirectUrl = isDirectPlaybackUrl(a.stream.url)
+              const bDirectUrl = isDirectPlaybackUrl(b.stream.url)
+              if (aDirectUrl && !bDirectUrl) return -1
+              if (!aDirectUrl && bDirectUrl) return 1
+              if (aDirectUrl && bDirectUrl) {
+                if (activeDebridProviderName()) {
+                  const aMatches = directStreamMatchesActiveDebrid(a.stream)
+                  const bMatches = directStreamMatchesActiveDebrid(b.stream)
+                  if (aMatches && !bMatches) return -1
+                  if (!aMatches && bMatches) return 1
+                  const aConflicts = directStreamConflictsWithActiveDebrid(a.stream)
+                  const bConflicts = directStreamConflictsWithActiveDebrid(b.stream)
+                  if (aConflicts && !bConflicts) return 1
+                  if (!aConflicts && bConflicts) return -1
+                }
+                return directPlaybackPenalty(a.stream) - directPlaybackPenalty(b.stream) || a.index - b.index
+              }
+            }
+            const aDirect = !aHash && isDirectPlaybackUrl(a.stream.url)
+            const bDirect = !bHash && isDirectPlaybackUrl(b.stream.url)
+            if (aHash && !bHash) return -1
+            if (!aHash && bHash) return 1
+            if (aDirect && bDirect) {
+              return directPlaybackPenalty(a.stream) - directPlaybackPenalty(b.stream) || a.index - b.index
+            }
+            return a.index - b.index
+          })
+          .map(entry => entry.stream)
     for (const stream of orderedStreams) {
       const providerOrder = stream.providerOrder ?? 999
       const providerLabel = stream.providerLabel || `providerOrder=${providerOrder}`
@@ -604,27 +671,47 @@ async function resolvePlayableStream(
 
         const hint = streamFilenameHint(stream) ?? fileHint
         if (allowDirectUrls && isDirectPlaybackUrl(stream.url)) {
-          const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
-          if (directFilename && !isVideoFile(directFilename)) {
-            app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
-            continue
+          const activeProvider = activeDebridProviderName()
+          if (activeProvider && hash) {
+            app.log.info(`play: resolving Stremio hash ${hashLabel}… for ${label} through ${activeProvider} cleanup-managed resolver`)
+          } else {
+            const useDirectUrl = !activeProvider || directStreamMatchesActiveDebrid(stream)
+            if (!useDirectUrl) {
+              if (directStreamConflictsWithActiveDebrid(stream) && !hash) {
+                app.log.info(`play: skipping direct Stremio stream for ${label}, marked for another debrid provider while ${activeProvider} is active`)
+                continue
+              }
+              if (hash) {
+                const reason = directStreamConflictsWithActiveDebrid(stream) ? 'provider-mismatched' : 'unmarked'
+                app.log.info(`play: deferring ${reason} direct Stremio stream for ${label} to ${activeProvider} hash resolver`)
+              } else {
+                app.log.info(`play: skipping unverified direct Stremio stream for ${label} while ${activeProvider} is active, no torrent hash exposed`)
+                continue
+              }
+            } else {
+              const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
+              if (directFilename && !isVideoFile(directFilename)) {
+                app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
+                continue
+              }
+              if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
+                app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
+                continue
+              }
+              if (
+                directFilename
+                && config.englishStreamMode === 'require'
+                && isRemoteAudioProbeUnreliable(directFilename)
+                && !streamClearlyPreferredLanguage(stream)
+              ) {
+                app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed preferred-language metadata`)
+                continue
+              }
+              app.log.info(`play: direct Stremio stream selected for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
+              clearFailedPlay(cacheKey)
+              return { url: stream.url, filename: directFilename, provider: providerLabel }
+            }
           }
-          if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
-            app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
-            continue
-          }
-          if (
-            directFilename
-            && config.englishStreamMode === 'require'
-            && isRemoteAudioProbeUnreliable(directFilename)
-            && !streamClearlyPreferredLanguage(stream)
-          ) {
-            app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed preferred-language metadata`)
-            continue
-          }
-          app.log.info(`play: direct stream selected for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
-          clearFailedPlay(cacheKey)
-          return { url: stream.url, filename: directFilename, provider: isTorBoxCdnUrl(stream.url ?? '') ? 'TorBox' : undefined }
         }
 
         if (!hash) {
@@ -680,7 +767,61 @@ async function resolvePlayableStream(
         const attemptKey = resolutionAttemptKey(hash, hint)
         const normalizedHash = hash.toLowerCase()
 
-        if (config.rdApiKey) {
+        // Try the provider indicated by stream cache markers first; default to RD→TorBox
+        const tbFirst = config.torBoxApiKey && streamClearlyTorBoxCached(stream) && !streamClearlyRealDebridCached(stream)
+        let torBoxTriedFirst = false
+
+        if (tbFirst) {
+          torBoxTriedFirst = true
+          const tbFirstFailedReason = failedTorBoxHashes.get(normalizedHash)
+          if (tbFirstFailedReason) {
+            app.log.info(`play: skipping TorBox hash ${hashLabel}… for ${label}, already failed: ${tbFirstFailedReason}`)
+          } else if (attemptedTorBoxResolutions.has(attemptKey)) {
+            app.log.info(`play: skipping duplicate TorBox hash ${hashLabel}… for ${label}`)
+          } else {
+            attemptedTorBoxResolutions.add(attemptKey)
+            try {
+              resolved = await tbResolveStream(hash, hint)
+              provider = 'TorBox'
+            } catch (tbErr) {
+              if (tbErr instanceof NotCachedError) {
+                failedTorBoxHashes.set(normalizedHash, 'not cached')
+                app.log.info(`play: hash ${hashLabel}… not cached on TorBox${config.rdApiKey ? ', trying RD' : ''}`)
+                if (!config.rdApiKey) continue
+              } else if (tbErr instanceof ProviderUnavailableError) {
+                tbTransientFailures += 1
+                const retryable = !isNonRetryableRdError(tbErr) && tbTransientFailures < MAX_RD_TRANSIENT_FAILURES
+                if (retryable) {
+                  app.log.warn(
+                    `play: TorBox error for providerOrder=${providerOrder} hash ${hashLabel}…: ${tbErr}; ` +
+                    `trying next candidate (${tbTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
+                  )
+                  continue
+                }
+                const terminalReason = terminalProviderHashFailureReason(tbErr)
+                if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
+                app.log.warn(
+                  `play: TorBox unavailable for ${label} after ${tbTransientFailures} failure${tbTransientFailures === 1 ? '' : 's'}: ${tbErr}` +
+                  (config.rdApiKey ? '; falling back to RD' : '')
+                )
+                if (!config.rdApiKey) {
+                  throw new PlaybackResolutionError(
+                    'Debrid provider unavailable',
+                    503,
+                    { error: 'Debrid provider unavailable', message: 'Debrid Unavailable' },
+                  )
+                }
+              } else {
+                const terminalReason = terminalProviderHashFailureReason(tbErr)
+                if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
+                app.log.warn(`play: hash ${hashLabel}… TorBox failed: ${tbErr}; trying next`)
+                continue
+              }
+            }
+          }
+        }
+
+        if (!resolved && config.rdApiKey) {
           const failedReason = failedRdHashes.get(normalizedHash)
           if (failedReason) {
             app.log.info(`play: skipping RD hash ${hashLabel}… for ${label}, already failed: ${failedReason}`)
@@ -694,7 +835,7 @@ async function resolvePlayableStream(
             } catch (rdErr) {
               if (rdErr instanceof NotCachedError) {
                 failedRdHashes.set(normalizedHash, 'not cached')
-                app.log.info(`play: hash ${hashLabel}… not cached on RD${config.torBoxApiKey ? ', trying TorBox' : ''}`)
+                app.log.info(`play: hash ${hashLabel}… not cached on RD${config.torBoxApiKey && !torBoxTriedFirst ? ', trying TorBox' : ''}`)
               } else if (rdErr instanceof ProviderUnavailableError) {
                 rdTransientFailures += 1
                 const retryable = !isNonRetryableRdError(rdErr) && rdTransientFailures < MAX_RD_TRANSIENT_FAILURES
@@ -708,9 +849,9 @@ async function resolvePlayableStream(
                   if (terminalReason) failedRdHashes.set(normalizedHash, terminalReason)
                   app.log.warn(
                     `play: RD unavailable for ${label} after ${rdTransientFailures} failure${rdTransientFailures === 1 ? '' : 's'}: ${rdErr}` +
-                    (config.torBoxApiKey ? '; falling back to TorBox' : '; not caching playback miss')
+                    (config.torBoxApiKey && !torBoxTriedFirst ? '; falling back to TorBox' : '; not caching playback miss')
                   )
-                  if (!config.torBoxApiKey) {
+                  if (!config.torBoxApiKey || torBoxTriedFirst) {
                     throw new PlaybackResolutionError(
                       'Real-Debrid unavailable',
                       503,
@@ -727,7 +868,7 @@ async function resolvePlayableStream(
           }
         }
 
-        if (!resolved && config.torBoxApiKey) {
+        if (!resolved && config.torBoxApiKey && !torBoxTriedFirst) {
           const failedReason = failedTorBoxHashes.get(normalizedHash)
           if (failedReason) {
             app.log.info(`play: skipping TorBox hash ${hashLabel}… for ${label}, already failed: ${failedReason}`)

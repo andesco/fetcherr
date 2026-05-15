@@ -12,6 +12,7 @@ import {
   fetchMovieByTmdbId, posterUrl,
   fetchShowByTmdbId,
   fetchAndCacheSeasonDetails, ensureShowSeasonsCached,
+  tmdbLocale,
 } from '../tmdb.js'
 import type { Movie, Show, Season, Episode } from '../db.js'
 import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
@@ -358,12 +359,58 @@ async function enrichStremioMetasWithImdbIds(metas: StremioMeta[]): Promise<Stre
   }))
 }
 
+const popularMetasCache = new Map<string, { metas: StremioMeta[]; fetchedAt: number; promise?: Promise<StremioMeta[]> }>()
+const POPULAR_CACHE_TTL_MS = 60 * 60 * 1000
+
+async function fetchTmdbPopularMetas(type: StremioMediaType): Promise<StremioMeta[]> {
+  if (!config.tmdbApiKey) return []
+  const cacheKey = `${type}:${tmdbLocale()}`
+  const cached = popularMetasCache.get(cacheKey)
+  if (cached && Date.now() - cached.fetchedAt < POPULAR_CACHE_TTL_MS) return cached.metas
+  if (cached?.promise) return cached.promise
+
+  const promise = (async () => {
+    const endpoint = type === 'movie' ? 'movie' : 'tv'
+    const locale = tmdbLocale()
+    const allResults: TmdbSearchResult[] = []
+    await Promise.all(
+      ['popular', 'top_rated'].flatMap(list =>
+        [1, 2, 3].map(page =>
+          fetch(`https://api.themoviedb.org/3/${endpoint}/${list}?api_key=${encodeURIComponent(config.tmdbApiKey)}&language=${locale}&page=${page}`, { signal: AbortSignal.timeout(10_000) })
+            .then(r => r.ok ? r.json() as Promise<{ results?: TmdbSearchResult[] }> : { results: [] as TmdbSearchResult[] })
+            .then(j => allResults.push(...((j as { results?: TmdbSearchResult[] }).results ?? [])))
+            .catch(() => {})
+        )
+      )
+    )
+    const seen = new Set<number>()
+    const metas = allResults
+      .filter(r => !seen.has(r.id) && seen.add(r.id))
+      .map(result => ({
+        id: `tmdb:${result.id}`,
+        type,
+        name: type === 'movie' ? (result.title ?? result.name ?? '') : (result.name ?? result.title ?? ''),
+        title: type === 'movie' ? (result.title ?? result.name ?? '') : (result.name ?? result.title ?? ''),
+        poster: result.poster_path ?? undefined,
+        background: result.backdrop_path ?? undefined,
+        overview: result.overview,
+        year: Number.parseInt((result.release_date || result.first_air_date || '').slice(0, 4), 10) || undefined,
+        released: result.release_date || result.first_air_date,
+        genres: (result.genre_ids ?? []).map(id => TMDB_GENRES[id]).filter(Boolean),
+      } satisfies StremioMeta))
+    popularMetasCache.set(cacheKey, { metas, fetchedAt: Date.now() })
+    return metas
+  })()
+  popularMetasCache.set(cacheKey, { metas: cached?.metas ?? [], fetchedAt: cached?.fetchedAt ?? 0, promise })
+  return promise
+}
+
 async function searchTmdbStremioFallback(searchTerm: string, types: StremioMediaType[]): Promise<StremioMeta[]> {
   if (!config.tmdbApiKey || !searchTerm.trim()) return []
   const metas: StremioMeta[] = []
   await Promise.all(types.map(async type => {
     const endpoint = type === 'movie' ? 'movie' : 'tv'
-    const url = `https://api.themoviedb.org/3/search/${endpoint}?api_key=${encodeURIComponent(config.tmdbApiKey)}&query=${encodeURIComponent(searchTerm)}&include_adult=false`
+    const url = `https://api.themoviedb.org/3/search/${endpoint}?api_key=${encodeURIComponent(config.tmdbApiKey)}&language=${tmdbLocale()}&query=${encodeURIComponent(searchTerm)}&include_adult=false`
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
       if (!res.ok) return
@@ -1666,7 +1713,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   app.get('/Library/VirtualFolders', async () => ([
     { Name: 'Movies', CollectionType: 'movies', ItemId: MOVIES_FOLDER_ID, Locations: ['/movies'] },
     { Name: 'Shows',  CollectionType: 'tvshows', ItemId: SHOWS_FOLDER_ID,  Locations: ['/shows'] },
-    ...(config.stremioSearchProviderUrls.length
+    ...(config.stremioSearchEnabled && config.stremioSearchProviderUrls.length
       ? [
           { Name: 'Search Movies', CollectionType: 'movies', ItemId: SEARCH_MOVIES_FOLDER_ID, Locations: ['/search/movies'] },
           { Name: 'Search Shows',  CollectionType: 'tvshows', ItemId: SEARCH_SHOWS_FOLDER_ID,  Locations: ['/search/shows'] },
@@ -1681,7 +1728,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   app.get('/Users/:id/GroupingOptions', async () => ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
-    ...(config.stremioSearchProviderUrls.length
+    ...(config.stremioSearchEnabled && config.stremioSearchProviderUrls.length
       ? [
           { Name: 'Search Movies', Id: SEARCH_MOVIES_FOLDER_ID, Type: 'movies' },
           { Name: 'Search Shows',  Id: SEARCH_SHOWS_FOLDER_ID,  Type: 'tvshows' },
@@ -1692,7 +1739,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   app.get('/UserViews/GroupingOptions', async () => ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
-    ...(config.stremioSearchProviderUrls.length
+    ...(config.stremioSearchEnabled && config.stremioSearchProviderUrls.length
       ? [
           { Name: 'Search Movies', Id: SEARCH_MOVIES_FOLDER_ID, Type: 'movies' },
           { Name: 'Search Shows',  Id: SEARCH_SHOWS_FOLDER_ID,  Type: 'tvshows' },
@@ -1730,7 +1777,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         RecursiveItemCount: showsCount,
         UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: SHOWS_FOLDER_ID },
       },
-      ...(config.stremioSearchProviderUrls.length
+      ...(config.stremioSearchEnabled && config.stremioSearchProviderUrls.length
         ? [
             {
               Name:               'Search Movies',
@@ -1876,9 +1923,29 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
 
     if (ParentId === SEARCH_MOVIES_FOLDER_ID || ParentId === SEARCH_SHOWS_FOLDER_ID) {
-      if (!SearchTerm) return { Items: [], TotalRecordCount: 0, StartIndex: offset }
       const searchType = ParentId === SEARCH_MOVIES_FOLDER_ID ? 'movie' : 'series'
-      return buildSearchResultItems(SearchTerm, searchType, SortBy, SortOrder, limit, offset, user)
+      // Infuse queries Season/Episode types against every folder — return empty for wrong types
+      const expectedType = searchType === 'movie' ? 'movie' : 'series'
+      if (includeTypes && !includeTypes.includes(expectedType)) {
+        return { Items: [], TotalRecordCount: 0, StartIndex: offset }
+      }
+      if (SearchTerm) return buildSearchResultItems(SearchTerm, searchType, SortBy, SortOrder, limit, offset, user)
+      // No search term: seed folder with popular/top-rated so Infuse can filter client-side
+      if (!config.stremioSearchProviderUrls.length && !config.tmdbApiKey) return { Items: [], TotalRecordCount: 0, StartIndex: offset }
+      if (limit === 0) {
+        void fetchTmdbPopularMetas(searchType)
+        return { Items: [], TotalRecordCount: 200, StartIndex: offset }
+      }
+      const popularMetas = await fetchTmdbPopularMetas(searchType)
+      const localMovies = searchType === 'movie' ? filterMoviesForUser(user, listMovies({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })) : []
+      const localShows = searchType === 'series' ? filterShowsForUser(user, listShows({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })) : []
+      const unseenMetas = popularMetas.filter(meta => {
+        const tmdbId = meta.id.startsWith('tmdb:') ? Number.parseInt(meta.id.slice(5), 10) : NaN
+        if (searchType === 'movie') return !localMovies.some(m => m.tmdbId === tmdbId)
+        return !localShows.some(s => s.tmdbId === tmdbId)
+      })
+      const items = unseenMetas.map(meta => stremioSearchMetaToItem(meta, searchType))
+      return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
 
     if (ParentId === COLLECTIONS_FOLDER_ID && config.traktCollections) {

@@ -366,6 +366,10 @@ function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
     ? basePool.filter(s => !hasExplicitYearMismatch(s, ctx))
     : basePool
 
+  if (config.streamRankingMode === 'provider') {
+    return pool
+  }
+
   return pool
     .map(stream => precomputeScore(stream, ctx))
     .sort((a, b) =>
@@ -693,11 +697,13 @@ export function extractHashFromStreamUrl(url?: string): string | null {
       }
     }
 
-    const playbackIndex = segments.findIndex(segment => segment.toLowerCase() === 'playback')
-    if (playbackIndex >= 0) {
-      for (const segment of segments.slice(playbackIndex + 1)) {
-        const hash = normalizeInfoHash(decodeURIComponent(segment))
-        if (hash) return hash
+    for (const keyword of ['playback', 'play']) {
+      const kwIndex = segments.findIndex(segment => segment.toLowerCase() === keyword)
+      if (kwIndex >= 0) {
+        for (const segment of segments.slice(kwIndex + 1)) {
+          const hash = normalizeInfoHash(decodeURIComponent(segment))
+          if (hash) return hash
+        }
       }
     }
 
@@ -705,6 +711,30 @@ export function extractHashFromStreamUrl(url?: string): string | null {
       const provider = segments[i].toLowerCase()
       if (provider !== 'tb' && provider !== 'torbox' && provider !== 'rd' && provider !== 'realdebrid') continue
       const hash = normalizeInfoHash(decodeURIComponent(segments[i + 1]))
+      if (hash) return hash
+    }
+
+    // AIOStreams proxy URLs embed the hash in a base64-encoded JSON segment:
+    // /api/v1/debrid/playback/{auth}/{base64-json}/{64hex}/{filename}
+    // where base64-json decodes to {"hash":"<40-hex-infohash>", ...}
+    for (const segment of segments) {
+      try {
+        const decoded = JSON.parse(Buffer.from(decodeURIComponent(segment), 'base64').toString('utf-8')) as unknown
+        if (decoded !== null && typeof decoded === 'object' && 'hash' in decoded) {
+          const hash = normalizeInfoHash((decoded as Record<string, unknown>).hash)
+          if (hash) return hash
+        }
+      } catch {
+        // not base64-JSON, skip
+      }
+    }
+
+    // Last resort: scan every segment for a bare 40-hex infohash.
+    // Handles proxying addons (e.g. Debridio) that embed the hash as an unkeyed
+    // path segment without a preceding keyword. Debrid API keys are rarely 40 hex
+    // chars, so false positives are unlikely; failures fall through to the next stream.
+    for (const segment of segments) {
+      const hash = normalizeInfoHash(decodeURIComponent(segment))
       if (hash) return hash
     }
     return null
