@@ -26,6 +26,7 @@ import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, pars
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
+import { getProviderFetchMetrics } from '../sootio.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 
@@ -684,7 +685,7 @@ export async function uiRoutes(app: FastifyInstance) {
     if (!requireAdmin(req, reply as never)) return
     const q     = (req as never as { query: Record<string, string> }).query
     const level = q.level
-    return { entries: getLogs(level) }
+    return { entries: getLogs(level), providerMetrics: getProviderFetchMetrics() }
   })
 
   // ── Settings page ──────────────────────────────────────────────────────────
@@ -706,7 +707,6 @@ export async function uiRoutes(app: FastifyInstance) {
       preferredAudioLanguage: config.preferredAudioLanguage,
       englishStreamMode: config.englishStreamMode,
       streamRankingMode: config.streamRankingMode,
-      stremioSearchEnabled: config.stremioSearchEnabled,
       serverUrl:         config.serverUrl,
       traktClientId:     config.traktClientId,
       traktWatchlistMovies: config.traktWatchlistMovies,
@@ -819,13 +819,6 @@ export async function uiRoutes(app: FastifyInstance) {
       getSetting('torBoxStreamProviderUrls') ?? '',
       getSetting('streamProviderUrls') ?? '',
     )
-    config.stremioSearchProviderUrls = collectStreamProviderUrls(
-      getSetting('rdStreamProviderUrls') ?? '',
-      getSetting('torBoxStreamProviderUrls') ?? '',
-      getSetting('streamProviderUrls') ?? '',
-      getSetting('sootioUrl') ?? '',
-      config.stremioSearchProviderUrls.join('\n'),
-    )
     if (typeof body.englishStreamMode === 'string') {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
@@ -835,11 +828,6 @@ export async function uiRoutes(app: FastifyInstance) {
       const mode = parseStreamRankingMode(body.streamRankingMode)
       setSetting('streamRankingMode', mode)
       config.streamRankingMode = mode
-    }
-    if (body.stremioSearchEnabled != null) {
-      const enabled = parseBooleanSetting(String(body.stremioSearchEnabled), false)
-      setSetting('stremioSearchEnabled', enabled ? 'true' : 'false')
-      config.stremioSearchEnabled = enabled
     }
     if (typeof body.preferredAudioLanguage === 'string') {
       const language = parseAudioLanguage(body.preferredAudioLanguage)

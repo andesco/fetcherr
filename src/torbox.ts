@@ -152,12 +152,6 @@ function requestDownloadUrl(torrentId: number, fileId: number, redirect: boolean
   return url.toString()
 }
 
-async function requestDownloadLink(torrentId: number, fileId: number): Promise<string> {
-  return tbFetch<string>('GET', '/torrents/requestdl', {
-    query: Object.fromEntries(new URL(requestDownloadUrl(torrentId, fileId, false)).searchParams.entries()),
-  })
-}
-
 async function deleteTorrent(torrentId: number): Promise<void> {
   await tbFetch('POST', '/torrents/controltorrent', {
     json: { torrent_id: torrentId, operation: 'delete' },
@@ -536,9 +530,7 @@ export async function resolveStream(
   try {
     const info = await waitReady(created.torrent_id)
     const file = pickBestFile(info.files, filePathHint)
-    const url = config.torBoxPlaybackMode === 'requestdlRedirect'
-      ? assertDownloadUrl(requestDownloadUrl(created.torrent_id, file.id, true))
-      : assertDownloadUrl(await requestDownloadLink(created.torrent_id, file.id))
+    const url = assertDownloadUrl(requestDownloadUrl(created.torrent_id, file.id, true))
     console.log(`torbox: resolved torrent ${created.torrent_id} → ${file.name}`)
     trackDownloadUrl(url, created.torrent_id)
     const resolved: ResolvedStream = { url, filename: file.name, bytes: file.size }

@@ -1,4 +1,3 @@
-import { Readable } from 'node:stream'
 import Fastify from 'fastify'
 import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists } from './config.js'
 import { getDb, getAllSettings } from './db.js'
@@ -8,7 +7,7 @@ import { wrapFastifyLogger } from './logger.js'
 import { markSyncComplete } from './sync-state.js'
 import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatchlist, syncTraktList, syncTraktWatchedStatus, startDeviceAuth, tokenStatus } from './trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls, syncMdblistList } from './mdblist.js'
-import { fetchRankedStreams, fetchRankedEpisodeStreams, fetchRankedStremioStreams, extractHashFromStream, summarizeStreamForLog, type StremioMediaType } from './sootio.js'
+import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream, summarizeStreamForLog } from './sootio.js'
 import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
 import {
   markPlaybackStarted as markTorBoxPlaybackStarted,
@@ -77,14 +76,6 @@ getDb()
   if (s.preferredAudioLanguage != null) config.preferredAudioLanguage = parseAudioLanguage(s.preferredAudioLanguage)
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
   if (s.streamRankingMode != null) config.streamRankingMode = parseStreamRankingMode(s.streamRankingMode)
-  if (s.stremioSearchEnabled != null) config.stremioSearchEnabled = parseBooleanSetting(s.stremioSearchEnabled, false)
-  config.stremioSearchProviderUrls = collectStreamProviderUrls(
-    s.rdStreamProviderUrls ?? '',
-    s.torBoxStreamProviderUrls ?? '',
-    s.streamProviderUrls ?? '',
-    config.sootioUrl,
-    config.stremioSearchProviderUrls.join('\n'),
-  )
   const bothConfigured = Boolean(config.rdApiKey && config.torBoxApiKey)
   if (bothConfigured) {
     config.streamProviderUrls = collectStreamProviderUrls(
@@ -164,6 +155,7 @@ const playbackPrewarmCache = new Map<string, PlaybackPrewarmEntry>()
 let activePlaybackPrewarmPath: string | null = null
 const PLAYBACK_ITEM_TTL_MS = 6 * 60 * 60 * 1000
 const playbackItemPaths = new Map<string, { playPath: string; expiresAt: number }>()
+const playbackClientNames = new Map<string, { clientName: string; expiresAt: number }>()
 const torBoxPlaybackUrls = new Map<string, { url: string; expiresAt: number }>()
 
 class PlaybackResolutionError extends Error {
@@ -205,6 +197,9 @@ function cleanupPlaybackPrewarmCache() {
   for (const [key, entry] of playbackItemPaths) {
     if (entry.expiresAt <= now) playbackItemPaths.delete(key)
   }
+  for (const [key, entry] of playbackClientNames) {
+    if (entry.expiresAt <= now) playbackClientNames.delete(key)
+  }
   for (const [key, entry] of torBoxPlaybackUrls) {
     if (entry.expiresAt <= now) torBoxPlaybackUrls.delete(key)
   }
@@ -213,6 +208,16 @@ function cleanupPlaybackPrewarmCache() {
 function registerPlaybackItem(itemId: string, playPath: string): void {
   cleanupPlaybackPrewarmCache()
   playbackItemPaths.set(itemId, { playPath, expiresAt: Date.now() + PLAYBACK_ITEM_TTL_MS })
+}
+
+function registerPlaybackClient(playPath: string, clientName: string): void {
+  cleanupPlaybackPrewarmCache()
+  playbackClientNames.set(playPath, { clientName, expiresAt: Date.now() + PLAYBACK_ITEM_TTL_MS })
+}
+
+function playbackClientName(playPath: string): string {
+  cleanupPlaybackPrewarmCache()
+  return playbackClientNames.get(playPath)?.clientName ?? ''
 }
 
 function rememberTorBoxPlaybackUrl(playPath: string, resolved: PlayResolution): void {
@@ -268,15 +273,13 @@ function prewarmPlayback(playPath: string, label: string): void {
     return
   }
 
-  const stremioMatch = playPath.match(/^\/play\/stremio\/(movie|series)\/(.+)$/)
   const episodeMatch = playPath.match(/^\/play\/([^/]+)\/(\d+)\/(\d+)$/)
   const movieMatch = playPath.match(/^\/play\/([^/]+)$/)
-  const resolver = stremioMatch
-    ? () => resolveStremioPlayback(stremioMatch[1] as StremioMediaType, decodeURIComponent(stremioMatch[2]))
-    : episodeMatch
-    ? () => resolveEpisodePlayback(episodeMatch[1], Number.parseInt(episodeMatch[2], 10), Number.parseInt(episodeMatch[3], 10))
+  const clientName = playbackClientName(playPath)
+  const resolver = episodeMatch
+    ? () => resolveEpisodePlayback(episodeMatch[1], Number.parseInt(episodeMatch[2], 10), Number.parseInt(episodeMatch[3], 10), clientName)
     : movieMatch
-      ? () => resolveMoviePlayback(movieMatch[1])
+      ? () => resolveMoviePlayback(movieMatch[1], clientName)
       : null
   if (!resolver) return
 
@@ -307,115 +310,6 @@ function terminalProviderHashFailureReason(err: unknown): string | null {
     return 'provider rejected hash'
   }
   return null
-}
-
-function isTorBoxCdnUrl(url: string): boolean {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase()
-    return hostname === 'tb-cdn.io' || hostname.endsWith('.tb-cdn.io')
-  } catch {
-    return false
-  }
-}
-
-function mediaContentType(filename?: string): string | null {
-  const ext = filename?.split('?')[0]?.split('.').pop()?.toLowerCase()
-  if (ext === 'mkv') return 'video/x-matroska'
-  if (ext === 'mp4' || ext === 'm4v') return 'video/mp4'
-  if (ext === 'avi') return 'video/x-msvideo'
-  if (ext === 'mov') return 'video/quicktime'
-  if (ext === 'ts' || ext === 'm2ts') return 'video/mp2t'
-  if (ext === 'webm') return 'video/webm'
-  return null
-}
-
-function contentDisposition(filename?: string): string | null {
-  if (!filename) return null
-  const fallback = filename
-    .replace(/[/\\:*?"<>|]/g, '_')
-    .replace(/[^\x20-\x7E]/g, '_')
-    .replace(/"/g, '_')
-    .slice(0, 180) || 'video'
-  return `inline; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-}
-
-async function proxyTorBoxStream(
-  resolved: PlayResolution,
-  req: {
-    method: string
-    headers: Record<string, string | string[] | undefined>
-  },
-  reply: {
-    code: (n: number) => typeof reply
-    header: (k: string, v: string) => typeof reply
-    send: (b?: unknown) => unknown
-    raw?: { once: (event: string, listener: () => void) => unknown }
-  },
-): Promise<unknown> {
-  const rangeHeader = req.headers['range']
-  const range = Array.isArray(rangeHeader) ? rangeHeader[0] : rangeHeader
-  const isHead = req.method === 'HEAD'
-  const upstreamRange = isHead ? (range ?? 'bytes=0-0') : range
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
-  const finishTorBoxPlayback = markTorBoxPlaybackStarted(resolved.url)
-  reply.raw?.once('close', () => {
-    controller.abort()
-    finishTorBoxPlayback()
-  })
-  let upstream: Response
-  try {
-    upstream = await fetch(resolved.url, {
-      method: 'GET',
-      headers: upstreamRange ? { Range: upstreamRange } : {},
-      signal: controller.signal,
-    })
-  } catch (err) {
-    app.log.warn(`play: TorBox proxy fetch failed: ${err}`)
-    clearTimeout(timeout)
-    finishTorBoxPlayback()
-    return reply.code(502).send({ error: 'Upstream fetch failed' })
-  }
-  clearTimeout(timeout)
-  const responseHeaders: Record<string, string> = {
-    'Accept-Ranges': 'bytes',
-  }
-  const ct = mediaContentType(resolved.filename) ?? upstream.headers.get('Content-Type')
-  if (ct) responseHeaders['Content-Type'] = ct
-  const cd = contentDisposition(resolved.filename)
-  if (cd) responseHeaders['Content-Disposition'] = cd
-  const upstreamContentLength = upstream.headers.get('Content-Length')
-  const cl = isHead && resolved.bytes && !range
-    ? String(resolved.bytes)
-    : upstreamContentLength
-  if (cl) responseHeaders['Content-Length'] = cl
-  const cr = upstream.headers.get('Content-Range')
-  if (cr && (!isHead || range)) responseHeaders['Content-Range'] = cr
-  const statusCode = isHead && !range && upstream.status === 206 ? 200 : upstream.status
-  if (isHead) await upstream.body?.cancel().catch(() => {})
-  if (isHead && reply.raw && 'setHeader' in reply.raw && 'end' in reply.raw) {
-    const raw = reply.raw as typeof reply.raw & {
-      statusCode: number
-      setHeader: (key: string, value: string) => void
-      end: () => void
-    }
-    raw.statusCode = statusCode
-    for (const [key, value] of Object.entries(responseHeaders)) raw.setHeader(key, value)
-    raw.end()
-    finishTorBoxPlayback()
-    return
-  }
-  for (const [key, value] of Object.entries(responseHeaders)) reply.header(key, value)
-  reply.code(statusCode)
-  if (isHead || !upstream.body) {
-    finishTorBoxPlayback()
-    return reply.send()
-  }
-  const body = Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream)
-  body.once('close', finishTorBoxPlayback)
-  body.once('end', finishTorBoxPlayback)
-  body.once('error', finishTorBoxPlayback)
-  return reply.send(body)
 }
 
 const VIDEO_EXTS = new Set(['mkv','mp4','avi','mov','m4v','ts','m2ts','wmv','flv','webm'])
@@ -601,6 +495,15 @@ function summarizeProbeError(err: unknown): string {
     .replace(/https?:\/\/\S+/g, '[url]')
     .split('\n')[0]
     .slice(0, 500)
+}
+
+function playbackClientFromHeaders(headers: Record<string, string | undefined>): string {
+  return (
+    headers['x-emby-client']
+    || headers['x-media-browser-client']
+    || headers['user-agent']
+    || ''
+  ).toString()
 }
 
 async function resolvePlayableStream(
@@ -981,19 +884,13 @@ async function resolvePlayableStream(
   return { url: best.url }
 }
 
-async function resolveMoviePlayback(imdbId: string): Promise<PlayResolution> {
+async function resolveMoviePlayback(imdbId: string, playbackClient = ''): Promise<PlayResolution> {
   const playPath = `/play/${imdbId}`
-  const streams = await fetchRankedStreams(imdbId)
+  const streams = await fetchRankedStreams(imdbId, config.preferredAudioLanguage, '', playbackClient)
   return resolvePlayableStream(streams, imdbId, playPath)
 }
 
-async function resolveStremioPlayback(mediaType: StremioMediaType, externalId: string): Promise<PlayResolution> {
-  const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(externalId)}`
-  const streams = await fetchRankedStremioStreams(mediaType, externalId)
-  return resolvePlayableStream(streams, `${mediaType} ${externalId}`, playPath, undefined, true)
-}
-
-async function resolveEpisodePlayback(imdbId: string, season: number, episodeNumber: number): Promise<PlayResolution> {
+async function resolveEpisodePlayback(imdbId: string, season: number, episodeNumber: number, playbackClient = ''): Promise<PlayResolution> {
   const playPath = `/play/${imdbId}/${season}/${episodeNumber}`
   const show = getShowByImdbId(imdbId)
   const episode = show
@@ -1006,6 +903,9 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
     episodeNumber,
     show?.year || undefined,
     Number.isFinite(episodeAirYear) ? episodeAirYear : undefined,
+    config.preferredAudioLanguage,
+    '',
+    playbackClient,
   )
   return resolvePlayableStream(
     streams,
@@ -1034,54 +934,17 @@ app.get('/play/:imdbId', async (req, reply) => {
   }
   app.log.info(`play: resolving stream for ${imdbId}`)
   try {
-    const { promise, reused } = getOrCreatePlaybackResolution(playPath, imdbId, () => resolveMoviePlayback(imdbId))
+    const clientName = playbackClientName(playPath)
+    const { promise, reused } = getOrCreatePlaybackResolution(playPath, imdbId, () => resolveMoviePlayback(imdbId, clientName))
     if (reused) app.log.info(`play: using in-flight resolver for ${imdbId}`)
     const resolved = await promise
     rememberTorBoxPlaybackUrl(playPath, resolved)
-    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
       return reply.code(err.statusCode).send(err.response)
     }
     app.log.warn(`play: no stream for ${imdbId}: ${err}`)
-    cacheFailedPlay(playPath, 'No streams found')
-    return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
-  }
-})
-
-app.get('/play/stremio/:mediaType/:externalId', async (req, reply) => {
-  const { mediaType, externalId } = req.params as { mediaType: StremioMediaType; externalId: string }
-  if (mediaType !== 'movie' && mediaType !== 'series') return reply.code(404).send({ error: 'Not found' })
-  const query = req.query as { token?: string; expires?: string } | undefined
-  const decodedExternalId = decodeURIComponent(externalId)
-  const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(decodedExternalId)}`
-  if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
-    if (!requestPlaybackUser(req.headers)) {
-      app.log.warn(`play: rejected unauthenticated Stremio playback request for ${mediaType} ${decodedExternalId}`)
-    } else {
-      app.log.warn(`play: rejected unsigned or expired Stremio playback request for ${mediaType} ${decodedExternalId}`)
-    }
-    return reply.code(401).send({ error: 'Unauthorized' })
-  }
-  const failedReason = getFailedPlayReason(playPath)
-  if (failedReason) {
-    app.log.info(`play: cached miss for Stremio ${mediaType} ${decodedExternalId} (${failedReason})`)
-    return reply.code(404).send({ error: failedReason, message: 'No Streams Found' })
-  }
-  try {
-    const label = `Stremio ${mediaType} ${decodedExternalId}`
-    const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveStremioPlayback(mediaType, decodedExternalId))
-    if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
-    const resolved = await promise
-    rememberTorBoxPlaybackUrl(playPath, resolved)
-    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
-    return reply.redirect(resolved.url, 302)
-  } catch (err) {
-    if (err instanceof PlaybackResolutionError) {
-      return reply.code(err.statusCode).send(err.response)
-    }
-    app.log.warn(`play: no Stremio stream for ${mediaType} ${decodedExternalId}: ${err}`)
     cacheFailedPlay(playPath, 'No streams found')
     return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
   }
@@ -1109,11 +972,11 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   app.log.info(`play: resolving episode stream for ${imdbId} S${s}E${e}`)
   try {
     const label = `${imdbId} S${s}E${e}`
-    const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveEpisodePlayback(imdbId, s, e))
+    const clientName = playbackClientName(playPath)
+    const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveEpisodePlayback(imdbId, s, e, clientName))
     if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
     const resolved = await promise
     rememberTorBoxPlaybackUrl(playPath, resolved)
-    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
@@ -1125,8 +988,8 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   }
 })
 
-await app.register(jellyfinRoutes, { prewarmPlayback, registerPlaybackItem, touchPlaybackItem, stopPlaybackItem })
-await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback, registerPlaybackItem, touchPlaybackItem, stopPlaybackItem })
+await app.register(jellyfinRoutes, { prewarmPlayback, registerPlaybackItem, registerPlaybackClient, touchPlaybackItem, stopPlaybackItem })
+await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback, registerPlaybackItem, registerPlaybackClient, touchPlaybackItem, stopPlaybackItem })
 await app.register(uiRoutes)
 
 // ── Trakt auth ────────────────────────────────────────────────────────────────

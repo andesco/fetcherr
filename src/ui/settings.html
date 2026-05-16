@@ -64,7 +64,7 @@
       <div class="provider-actions">
         <button type="button" class="btn btn-sm" onclick="addProviderRow()">+ Add Add-on</button>
       </div>
-      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are shared across all debrid providers and also feed Stremio search results.</div>
+      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are used only to find playable streams for items already in your Fetcherr library.</div>
     </div>
     <div class="field">
       <label for="preferredAudioLanguage">Preferred Audio Language</label>
@@ -100,9 +100,6 @@
         <option value="provider">Provider order — use add-on results as-is</option>
       </select>
       <div class="field-note">Use Provider order when your add-on (e.g. AIOStreams with SEL) has already ranked streams. Fetcherr re-ranking can conflict with add-on sorting.</div>
-    </div>
-    <div hidden aria-hidden="true">
-      <input id="stremioSearchEnabled" type="checkbox">
     </div>
   </section>
 
@@ -596,7 +593,6 @@
     document.getElementById('preferredAudioLanguage').value = d.preferredAudioLanguage || 'en'
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
     document.getElementById('streamRankingMode').value = d.streamRankingMode || 'fetcherr'
-    document.getElementById('stremioSearchEnabled').checked = !!d.stremioSearchEnabled
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
     setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
     setSecretPlaceholder('tmdbApiKey', hasStoredTmdbApiKey, 'Enter your TMDB API key')
@@ -979,7 +975,6 @@
       preferredAudioLanguage: document.getElementById('preferredAudioLanguage').value,
       englishStreamMode: document.getElementById('englishStreamMode').value,
       streamRankingMode: document.getElementById('streamRankingMode').value,
-      stremioSearchEnabled: document.getElementById('stremioSearchEnabled').checked,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,
       movieReleaseMode: document.getElementById('movieReleaseMode').value,

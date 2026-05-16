@@ -61,6 +61,11 @@
     </div>
   </div>
 
+  <section class="section log-metrics-section">
+    <div class="section-title">Add-on Provider Health</div>
+    <div class="provider-metrics" id="providerMetrics"></div>
+  </section>
+
   <div class="log-list" id="logList"></div>
 </div>
 
@@ -93,12 +98,14 @@
     if (!res.ok) return
     const d = await res.json()
     const entries = d.entries || []
+    const metrics = d.providerMetrics || []
 
     const dot = document.getElementById('refreshDot')
     dot.classList.add('flash')
     setTimeout(() => dot.classList.remove('flash'), 400)
 
     const list = document.getElementById('logList')
+    renderProviderMetrics(metrics)
     if (!entries.length) {
       list.innerHTML = '<div class="empty">No log entries yet.</div>'
       return
@@ -110,6 +117,54 @@
         <span class="log-badge ${esc(e.level)}">${esc(e.level)}</span>
         <span class="log-msg">${esc(e.msg)}</span>
       </div>`).join('')
+
+  }
+
+  function renderProviderMetrics(metrics) {
+    const wrap = document.getElementById('providerMetrics')
+    if (!metrics.length) {
+      wrap.innerHTML = '<div class="empty compact">No add-on calls recorded yet.</div>'
+      return
+    }
+
+    const byProvider = new Map()
+    for (const metric of metrics) {
+      const key = metric.provider || 'Unknown provider'
+      const current = byProvider.get(key) || { provider: key, calls: 0, failures: 0, totalMs: 0, streams: 0, last: metric }
+      current.calls += 1
+      current.failures += metric.ok ? 0 : 1
+      current.totalMs += Number(metric.durationMs || 0)
+      current.streams += Number(metric.streams || 0)
+      if (new Date(metric.time) > new Date(current.last.time)) current.last = metric
+      byProvider.set(key, current)
+    }
+
+    const rows = [...byProvider.values()].slice(0, 12).map(row => {
+      const avgMs = row.calls ? Math.round(row.totalMs / row.calls) : 0
+      const failureRate = row.calls ? Math.round((row.failures / row.calls) * 100) : 0
+      const last = row.last || {}
+      const status = last.ok ? 'ok' : 'error'
+      return `
+        <div class="provider-metric ${status}">
+          <div class="provider-metric-main">
+            <div class="provider-metric-name">${esc(row.provider)}</div>
+            <div class="provider-metric-path">${esc(last.path || '')}</div>
+          </div>
+          <div class="provider-metric-stat">
+            <span>avg</span>
+            <strong>${esc(avgMs)}ms</strong>
+          </div>
+          <div class="provider-metric-stat">
+            <span>fail</span>
+            <strong>${esc(failureRate)}%</strong>
+          </div>
+          <div class="provider-metric-stat">
+            <span>last</span>
+            <strong>${esc(last.streams ?? 0)}</strong>
+          </div>
+        </div>`
+    }).join('')
+    wrap.innerHTML = rows
   }
 
   async function doLogout() {

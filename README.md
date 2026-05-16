@@ -1,6 +1,6 @@
 # Fetcherr
 
-Fetcherr gives Infuse and VidHub a streaming experience backed by your debrid provider. It acts as a Jellyfin-compatible server, syncing your Trakt and MDBList watchlists, resolving cached torrent streams through Real-Debrid or TorBox, and serving them to your client without a local media collection or mount.
+Fetcherr gives Infuse and VidHub a streaming experience backed by your debrid provider. It acts as a Jellyfin-compatible server, syncing your Trakt and MDBList watchlists, resolving cached torrent streams through Real-Debrid or TorBox, and serving library items to your client without a local media collection or mount.
 
 ## Responsible Use
 
@@ -55,6 +55,12 @@ Configure AIOStreams with your debrid provider, then paste the manifest URL into
 - **Season/Episode Matching:** Off — breaks daily/late-night shows otherwise
 - **Language filter:** Set to your preferred language for pre-filtered results
 - In Fetcherr Settings, set **Stream Ranking** to **Provider Order** to preserve AIOStreams sort
+
+Fetcherr does not expose Stremio catalog search results as Jellyfin library items. Infuse and VidHub should only display media that exists in the Fetcherr library.
+
+## Diagnostics
+
+The in-app Logs page shows recent application logs and add-on provider health. Provider health tracks recent add-on response times, returned stream counts, and failure rates so slow or unreliable add-ons are easier to identify.
 
 ## Connecting Infuse
 

@@ -2133,6 +2133,63 @@ label {
   color: #ffedc2;
 }
 
+.log-metrics-section {
+  margin-bottom: 14px;
+}
+
+.provider-metrics {
+  display: grid;
+  gap: 8px;
+}
+
+.provider-metric {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(3, 82px);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(20, 24, 33, .56);
+}
+
+.provider-metric.error {
+  border-color: var(--red-border);
+  background: var(--red-dim);
+}
+
+.provider-metric-name {
+  color: var(--text);
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-metric-path {
+  margin-top: 3px;
+  color: var(--muted);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-metric-stat {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.provider-metric-stat strong {
+  color: var(--text);
+  font-size: 13px;
+  text-transform: none;
+}
+
 .config-row {
   display: flex;
   align-items: center;

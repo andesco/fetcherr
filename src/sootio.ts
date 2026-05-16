@@ -17,49 +17,17 @@ export interface Stream {
   providerLabel?: string
 }
 
-export type StremioMediaType = 'movie' | 'series'
-
-export interface StremioMeta {
-  id: string
-  type?: StremioMediaType | string
-  name?: string
-  title?: string
-  poster?: string
-  background?: string
-  logo?: string
-  description?: string
-  overview?: string
-  genres?: string[]
-  genre?: string[]
-  releaseInfo?: string | number
-  year?: string | number
-  imdb_id?: string
-  imdbId?: string
-  runtime?: string
-  released?: string
-  videos?: StremioMeta[]
-  season?: number
-  episode?: number
-  number?: number
-}
-
-interface StremioCatalog {
-  id: string
-  type: string
-  name?: string
-  extra?: Array<{ name?: string; isRequired?: boolean }>
-}
-
-interface StremioManifest {
-  catalogs?: StremioCatalog[]
-}
-
-interface StremioCatalogResponse {
-  metas?: StremioMeta[]
-}
-
-interface StremioMetaResponse {
-  meta?: StremioMeta
+export interface ProviderFetchMetric {
+  time: string
+  provider: string
+  path: string
+  ok: boolean
+  durationMs: number
+  streams: number
+  hashBacked: number
+  directUrls: number
+  status?: number
+  error?: string
 }
 
 interface StreamRankContext {
@@ -67,6 +35,7 @@ interface StreamRankContext {
   alternateYear?: number
   preferredLanguage?: string
   mediaLanguage?: string
+  playbackClient?: string
 }
 
 interface RankedStreamScore {
@@ -87,6 +56,19 @@ interface RankedStreamScore {
   sizeQuality: number
   codec: number
   container: number
+  clientCompatibilityPenalty: number
+}
+
+const PROVIDER_METRICS_MAX = 250
+const providerFetchMetrics: ProviderFetchMetric[] = []
+
+function recordProviderFetchMetric(metric: ProviderFetchMetric): void {
+  providerFetchMetrics.push(metric)
+  if (providerFetchMetrics.length > PROVIDER_METRICS_MAX) providerFetchMetrics.shift()
+}
+
+export function getProviderFetchMetrics(): ProviderFetchMetric[] {
+  return [...providerFetchMetrics].reverse()
 }
 
 function streamText(s: Stream): string {
@@ -212,6 +194,7 @@ function precomputeScore(s: Stream, ctx: StreamRankContext = {}): RankedStreamSc
     sizeQuality: sizeQualityScore(s),
     codec: codecScore(s),
     container: containerScore(s),
+    clientCompatibilityPenalty: clientCompatibilityPenalty(s, ctx.playbackClient),
   }
 }
 
@@ -235,6 +218,7 @@ function scoreSummary(score: RankedStreamScore): string {
     `sizeQuality=${score.sizeQuality}`,
     `codec=${score.codec}`,
     `container=${score.container}`,
+    `clientCompatibilityPenalty=${score.clientCompatibilityPenalty}`,
     `providerOrder=${s.providerOrder ?? 999}`,
     `provider=${JSON.stringify(s.providerLabel ?? '')}`,
     `name=${JSON.stringify(s.name ?? '')}`,
@@ -358,6 +342,21 @@ function containerScore(s: Stream): number {
   return 1
 }
 
+function clientCompatibilityPenalty(s: Stream, clientName = ''): number {
+  const client = clientName.toLowerCase()
+  if (!client.includes('swiftfin')) return 0
+
+  const text = streamMetadataText(s).toLowerCase()
+  let penalty = 0
+  if (/\b(dolby vision|dv)\b/.test(text)) penalty += 6
+  if (/\bhdr10\+\b|\bhdr\b/.test(text)) penalty += 4
+  if (/\btruehd\b|\batmos\b|\bdts[- ]hd\b|\bdtsx\b/.test(text)) penalty += 5
+  if (/\bremux\b/.test(text)) penalty += 3
+  if (/\b2160p\b|\b4k\b|\bufhd\b/.test(text)) penalty += 3
+  if (/\bhevc\b|h\.?265\b|x265\b/.test(text)) penalty += 2
+  return penalty
+}
+
 function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
   const usable = streams.filter(hasUsableUrl)
   const preferred = usable.filter(s => !isLikelyBadStream(s))
@@ -384,6 +383,7 @@ function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
       || b.source - a.source
       || b.sizeQuality - a.sizeQuality
       || b.codec - a.codec
+      || a.clientCompatibilityPenalty - b.clientCompatibilityPenalty
       || (config.englishStreamMode === 'off' ? 0 : b.preferredLanguage - a.preferredLanguage)
       || b.mediaLanguage - a.mediaLanguage
       || b.container - a.container
@@ -396,12 +396,6 @@ function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
 function providerBases(): string[] {
   const urls = [...config.streamProviderUrls]
   if (config.sootioUrl) urls.push(config.sootioUrl)
-  return [...new Set(urls)]
-}
-
-function searchProviderBases(): string[] {
-  const urls = [...config.stremioSearchProviderUrls]
-  if (!urls.length) urls.push(...providerBases())
   return [...new Set(urls)]
 }
 
@@ -426,111 +420,11 @@ function providerLabel(base: string, idx: number): string {
   }
 }
 
-async function fetchStreams(url: string): Promise<Stream[]> {
+async function fetchStreams(url: string): Promise<{ streams: Stream[]; status: number }> {
   const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
   if (!res.ok) throw new Error(`Stremio add-on returned ${res.status}`)
   const json = await res.json() as { streams?: Stream[] }
-  return json.streams ?? []
-}
-
-const manifestCache = new Map<string, { expiresAt: number; value: StremioManifest | null }>()
-const MANIFEST_CACHE_TTL_MS = 5 * 60 * 1000
-const stremioMetaCache = new Map<string, { expiresAt: number; value: StremioMeta | null }>()
-const STREMIO_META_CACHE_TTL_MS = 10 * 60 * 1000
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
-  if (!res.ok) throw new Error(`Stremio add-on returned ${res.status}`)
-  return await res.json() as T
-}
-
-async function fetchManifest(base: string): Promise<StremioManifest | null> {
-  const cached = manifestCache.get(base)
-  if (cached && cached.expiresAt > Date.now()) return cached.value
-
-  try {
-    const value = await fetchJson<StremioManifest>(`${base}/manifest.json`)
-    manifestCache.set(base, { value, expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS })
-    return value
-  } catch {
-    manifestCache.set(base, { value: null, expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS })
-    return null
-  }
-}
-
-function searchCatalog(manifest: StremioManifest | null, type: StremioMediaType): StremioCatalog | null {
-  const catalogs = manifest?.catalogs ?? []
-  return catalogs
-    .filter(catalog => catalog.type?.toLowerCase() === type)
-    .filter(catalog => catalog.extra?.some(extra => extra.name?.toLowerCase() === 'search'))
-    .sort((a, b) => Number(a.id.toLowerCase().includes('people')) - Number(b.id.toLowerCase().includes('people')))
-    [0] ?? null
-}
-
-async function fetchSearchMetasFromProvider(base: string, type: StremioMediaType, query: string): Promise<StremioMeta[]> {
-  const manifest = await fetchManifest(base)
-  const catalog = searchCatalog(manifest, type)
-  if (!catalog) return []
-
-  const url = `${base}/catalog/${type}/${encodeURIComponent(catalog.id)}/search=${encodeURIComponent(query)}.json`
-  const json = await fetchJson<StremioCatalogResponse>(url)
-  return (json.metas ?? []).map(meta => ({ ...meta, type: meta.type ?? type }))
-}
-
-export async function searchStremioMetas(query: string, types: StremioMediaType[]): Promise<StremioMeta[]> {
-  const providers = searchProviderBases()
-  if (!providers.length || !query.trim()) return []
-
-  const settled = await Promise.allSettled(
-    providers.flatMap((base, providerIdx) =>
-      types.map(async type => {
-        const metas = await fetchSearchMetasFromProvider(base, type, query)
-        return metas.map(meta => ({ meta, providerIdx }))
-      }),
-    ),
-  )
-
-  const deduped = new Map<string, StremioMeta>()
-  for (const result of settled) {
-    if (result.status !== 'fulfilled') continue
-    for (const { meta, providerIdx } of result.value) {
-      const key = `${String(meta.type ?? '').toLowerCase()}|${meta.id || meta.imdb_id || meta.imdbId}|${meta.name || meta.title}|${providerIdx}`
-      if (!deduped.has(key)) deduped.set(key, meta)
-    }
-  }
-  return [...deduped.values()]
-}
-
-async function fetchMetaFromProvider(base: string, type: StremioMediaType, id: string): Promise<StremioMeta | null> {
-  const cacheKey = `${base}|${type}|${id}`
-  const cached = stremioMetaCache.get(cacheKey)
-  if (cached && cached.expiresAt > Date.now()) return cached.value
-
-  try {
-    const url = `${base}/meta/${type}/${encodeURIComponent(id)}.json`
-    const json = await fetchJson<StremioMetaResponse>(url)
-    const value = json.meta ? { ...json.meta, type: json.meta.type ?? type } : null
-    stremioMetaCache.set(cacheKey, { value, expiresAt: Date.now() + STREMIO_META_CACHE_TTL_MS })
-    return value
-  } catch {
-    stremioMetaCache.set(cacheKey, { value: null, expiresAt: Date.now() + STREMIO_META_CACHE_TTL_MS })
-    return null
-  }
-}
-
-export async function fetchStremioMetaDetails(id: string, type: StremioMediaType): Promise<StremioMeta | null> {
-  const providers = searchProviderBases()
-  if (!providers.length || !id) return null
-
-  const settled = await Promise.allSettled(providers.map(base => fetchMetaFromProvider(base, type, id)))
-  const metas = settled
-    .filter((result): result is PromiseFulfilledResult<StremioMeta | null> => result.status === 'fulfilled')
-    .map(result => result.value)
-    .filter((meta): meta is StremioMeta => Boolean(meta))
-
-  if (!metas.length) return null
-  const ranked = metas.sort((a, b) => (b.videos?.length ?? 0) - (a.videos?.length ?? 0))
-  return ranked[0]
+  return { streams: json.streams ?? [], status: res.status }
 }
 
 export function summarizeStreamForLog(s: Stream): string {
@@ -570,13 +464,26 @@ async function fetchStreamsFromProviders(path: string): Promise<Stream[]> {
   const settled = await Promise.allSettled(
     providers.map(async (base, idx) => {
       const url = `${base}${path}`
-      const streams = await fetchStreams(url)
       const label = providerLabel(base, idx)
+      const startedAt = Date.now()
+      const { streams, status } = await fetchStreams(url)
+      const durationMs = Date.now() - startedAt
       const hashBacked = streams.filter(s => extractHashFromStream(s)).length
       const directUrls = streams.filter(s => !extractHashFromStream(s) && typeof s.url === 'string' && s.url.length > 0).length
+      recordProviderFetchMetric({
+        time: new Date().toISOString(),
+        provider: label,
+        path,
+        ok: true,
+        durationMs,
+        streams: streams.length,
+        hashBacked,
+        directUrls,
+        status,
+      })
       console.log(
         `streams: ${label} returned ${streams.length} stream${streams.length === 1 ? '' : 's'} ` +
-        `for ${path} (${hashBacked} hash-backed, ${directUrls} direct-url, ${streams.length - hashBacked - directUrls} metadata-only)`
+        `for ${path} in ${durationMs}ms (${hashBacked} hash-backed, ${directUrls} direct-url, ${streams.length - hashBacked - directUrls} metadata-only)`
       )
       for (const stream of streams.slice(0, 3)) {
         console.log(`streams: ${label} sample ${summarizeStreamForLog({ ...stream, providerOrder: idx, providerLabel: label })}`)
@@ -597,6 +504,19 @@ async function fetchStreamsFromProviders(path: string): Promise<Stream[]> {
     if (result.status === 'fulfilled') {
       merged.push(...result.value)
     } else {
+      const label = providerLabel(providers[idx], idx)
+      const error = result.reason instanceof Error ? result.reason.message : String(result.reason)
+      recordProviderFetchMetric({
+        time: new Date().toISOString(),
+        provider: label,
+        path,
+        ok: false,
+        durationMs: 0,
+        streams: 0,
+        hashBacked: 0,
+        directUrls: 0,
+        error,
+      })
       errors.push(`${providers[idx]}: ${String(result.reason)}`)
     }
   }
@@ -619,11 +539,16 @@ async function fetchStreamsFromProviders(path: string): Promise<Stream[]> {
  * Fetch all streams for a movie, ranked by cacheability, language safety,
  * quality signals, and compatibility. The caller picks the best candidate.
  */
-export async function fetchRankedStreams(imdbId: string, preferredLanguage = config.preferredAudioLanguage, mediaLanguage = ''): Promise<Stream[]> {
+export async function fetchRankedStreams(
+  imdbId: string,
+  preferredLanguage = config.preferredAudioLanguage,
+  mediaLanguage = '',
+  playbackClient = '',
+): Promise<Stream[]> {
   const streams = await fetchStreamsFromProviders(`/stream/movie/${imdbId}.json`)
   if (!streams.length) throw new Error(`No streams found for ${imdbId}`)
-  const ranked = rankStreams(streams, { preferredLanguage, mediaLanguage })
-  const summaries = ranked.map(stream => precomputeScore(stream, { preferredLanguage, mediaLanguage }))
+  const ranked = rankStreams(streams, { preferredLanguage, mediaLanguage, playbackClient })
+  const summaries = ranked.map(stream => precomputeScore(stream, { preferredLanguage, mediaLanguage, playbackClient }))
   console.log(`streams: top candidates for ${imdbId}`)
   for (const score of summaries.slice(0, 5)) {
     console.log(`streams: ${scoreSummary(score)} :: ${score.stream.title || score.stream.name}`)
@@ -644,34 +569,14 @@ export async function fetchRankedEpisodeStreams(
   alternateYear?: number,
   preferredLanguage = config.preferredAudioLanguage,
   mediaLanguage = '',
+  playbackClient = '',
 ): Promise<Stream[]> {
   const streams = await fetchStreamsFromProviders(`/stream/series/${imdbId}:${season}:${episode}.json`)
   if (!streams.length) throw new Error(`No streams found for ${imdbId} S${season}E${episode}`)
-  const ranked = rankStreams(streams, { expectedYear, alternateYear, preferredLanguage, mediaLanguage })
-  const summaries = ranked.map(stream => precomputeScore(stream, { expectedYear, alternateYear, preferredLanguage, mediaLanguage }))
+  const ranked = rankStreams(streams, { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient })
+  const summaries = ranked.map(stream => precomputeScore(stream, { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient }))
   if (!ranked.length) throw new Error(`No year-matched streams found for ${imdbId} S${season}E${episode}`)
   console.log(`streams: top candidates for ${imdbId} S${season}E${episode}`)
-  for (const score of summaries.slice(0, 5)) {
-    console.log(`streams: ${scoreSummary(score)} :: ${score.stream.title || score.stream.name}`)
-  }
-  return ranked
-}
-
-/**
- * Fetch all streams for a Stremio item, ranked by cacheability and quality.
- * The add-on supplies direct stream URLs or hash-backed sources for playback.
- */
-export async function fetchRankedStremioStreams(
-  mediaType: StremioMediaType,
-  externalId: string,
-  expectedYear?: number,
-): Promise<Stream[]> {
-  const streams = await fetchStreamsFromProviders(`/stream/${mediaType}/${externalId}.json`)
-  if (!streams.length) throw new Error(`No streams found for ${mediaType} ${externalId}`)
-  const ranked = rankStreams(streams, expectedYear ? { expectedYear } : {})
-  if (!ranked.length) throw new Error(`No ranked streams found for ${mediaType} ${externalId}`)
-  const summaries = ranked.map(stream => precomputeScore(stream, expectedYear ? { expectedYear } : {}))
-  console.log(`streams: top Stremio candidates for ${mediaType} ${externalId}`)
   for (const score of summaries.slice(0, 5)) {
     console.log(`streams: ${scoreSummary(score)} :: ${score.stream.title || score.stream.name}`)
   }
