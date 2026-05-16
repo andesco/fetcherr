@@ -353,7 +353,10 @@ interface ResolvedCacheEntry extends ResolvedStream {
 
 const RESOLVED_CACHE_TTL_MS = 3 * 60 * 1000
 const resolvedStreamCache   = new Map<string, ResolvedCacheEntry>()
-const CLEANUP_IDLE_DELAY_MS = 15 * 60 * 1000
+// TorBox requestdl URLs remain useful only while the torrent stays in the
+// account. Keep managed search playback resumable for a normal viewing window,
+// then clean up after it has been idle for long enough to avoid library buildup.
+const CLEANUP_IDLE_DELAY_MS = 6 * 60 * 60 * 1000
 
 interface CleanupEntry {
   torrentId:       number

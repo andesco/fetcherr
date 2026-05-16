@@ -306,13 +306,25 @@ function terminalProviderHashFailureReason(err: unknown): string | null {
   return null
 }
 
-function isTorBoxCdnUrl(url: string): boolean {
+function isTorBoxManagedPlaybackUrl(url: string): boolean {
   try {
-    const hostname = new URL(url).hostname.toLowerCase()
-    return hostname === 'tb-cdn.io' || hostname.endsWith('.tb-cdn.io')
+    const parsed = new URL(url)
+    const hostname = parsed.hostname.toLowerCase()
+    return hostname === 'tb-cdn.io'
+      || hostname.endsWith('.tb-cdn.io')
+      || (hostname === 'api.torbox.app' && parsed.pathname.includes('/torrents/requestdl'))
   } catch {
     return false
   }
+}
+
+function isPlaybackRequestAuthorized(
+  playPath: string,
+  query: { token?: string; expires?: string } | undefined,
+  headers: Record<string, string | string[] | undefined>,
+): boolean {
+  if (verifySignedPlaybackPath(playPath, query?.token, query?.expires)) return true
+  return Boolean(requestPlaybackUser(headers))
 }
 
 function mediaContentType(filename?: string): string | null {
@@ -960,7 +972,7 @@ app.get('/play/:imdbId', async (req, reply) => {
   const { imdbId } = req.params as { imdbId: string }
   const query = req.query as { token?: string; expires?: string } | undefined
   const playPath = `/play/${imdbId}`
-  if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
+  if (!isPlaybackRequestAuthorized(playPath, query, req.headers)) {
     if (!requestPlaybackUser(req.headers)) {
       app.log.warn(`play: rejected unauthenticated playback request for ${imdbId}`)
     } else {
@@ -979,7 +991,7 @@ app.get('/play/:imdbId', async (req, reply) => {
     if (reused) app.log.info(`play: using in-flight resolver for ${imdbId}`)
     const resolved = await promise
     rememberTorBoxPlaybackUrl(playPath, resolved)
-    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
+    if (resolved.provider === 'TorBox' && isTorBoxManagedPlaybackUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
@@ -997,7 +1009,7 @@ app.get('/play/stremio/:mediaType/:externalId', async (req, reply) => {
   const query = req.query as { token?: string; expires?: string } | undefined
   const decodedExternalId = decodeURIComponent(externalId)
   const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(decodedExternalId)}`
-  if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
+  if (!isPlaybackRequestAuthorized(playPath, query, req.headers)) {
     if (!requestPlaybackUser(req.headers)) {
       app.log.warn(`play: rejected unauthenticated Stremio playback request for ${mediaType} ${decodedExternalId}`)
     } else {
@@ -1016,7 +1028,7 @@ app.get('/play/stremio/:mediaType/:externalId', async (req, reply) => {
     if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
     const resolved = await promise
     rememberTorBoxPlaybackUrl(playPath, resolved)
-    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
+    if (resolved.provider === 'TorBox' && isTorBoxManagedPlaybackUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
@@ -1032,7 +1044,7 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   const { imdbId, season, episode } = req.params as { imdbId: string; season: string; episode: string }
   const query = req.query as { token?: string; expires?: string } | undefined
   const playPath = `/play/${imdbId}/${season}/${episode}`
-  if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
+  if (!isPlaybackRequestAuthorized(playPath, query, req.headers)) {
     if (!requestPlaybackUser(req.headers)) {
       app.log.warn(`play: rejected unauthenticated episode playback request for ${imdbId} S${season}E${episode}`)
     } else {
@@ -1054,7 +1066,7 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
     if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
     const resolved = await promise
     rememberTorBoxPlaybackUrl(playPath, resolved)
-    if (resolved.provider === 'TorBox' && isTorBoxCdnUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
+    if (resolved.provider === 'TorBox' && isTorBoxManagedPlaybackUrl(resolved.url)) return proxyTorBoxStream(resolved, req, reply as never)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
