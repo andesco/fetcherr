@@ -11,6 +11,7 @@ Fetcherr should only be used with media you own, have lawfully obtained, or are 
 - Docker
 - TMDB API key
 - Real-Debrid or TorBox API key
+- Stremio add-on with debrid support (e.g. AIOStreams, Comet, Debridio)
 - Optional: TVDB API key, Trakt client ID/secret, MDBList API key
 
 ## Quick Start
@@ -34,6 +35,26 @@ docker compose up -d
 ```
 
 Open `http://YOUR_SERVER:9990/ui/setup-admin`, create an admin account, then enter your API keys and provider URLs in Settings.
+
+## Setup
+
+1. Deploy and start the container (see Quick Start above)
+2. Open `http://YOUR_SERVER:9990/ui/setup-admin` — create admin account
+3. Go to **Settings** and enter:
+   - TMDB API key
+   - Real-Debrid or TorBox API key
+   - One or more Stremio add-on manifest URLs (AIOStreams, Comet, Debridio, etc.)
+4. Optionally add Trakt or MDBList credentials to sync watchlists
+5. Connect your client (see below)
+
+### AIOStreams
+
+Configure AIOStreams with your debrid provider, then paste the manifest URL into Fetcherr Settings under **Add-on Provider URLs**. Recommended settings:
+
+- **Only Cached:** On — Fetcherr streams cached content only; uncached will fail
+- **Season/Episode Matching:** Off — breaks daily/late-night shows otherwise
+- **Language filter:** Set to your preferred language for pre-filtered results
+- In Fetcherr Settings, set **Stream Ranking** to **Provider Order** to preserve AIOStreams sort
 
 ## Connecting Infuse
 
