@@ -1,6 +1,6 @@
 # Fetcherr
 
-Fetcherr gives Infuse and VidHub a streaming experience backed by your stream provider. It acts as a Jellyfin-compatible server, syncing your Trakt and MDBList watchlists, resolving cached torrent streams through Real-Debrid or TorBox, resolving EasyNews streams returned by AIOStreams, and serving library items to your client without a local media collection or mount.
+Fetcherr is a Jellyfin-compatible streaming bridge for Infuse and VidHub that syncs watchlists into a library and resolves playback through Real-Debrid, TorBox, or EasyNews streams returned by AIOStreams.
 
 ## Responsible Use
 
@@ -58,12 +58,6 @@ Configure AIOStreams with your provider, then paste the manifest URL into Fetche
 
 Fetcherr also supports EasyNews streams when they are returned by AIOStreams as direct playable URLs. When AIOStreams returns mixed EasyNews, TorBox, and Real-Debrid candidates, Fetcherr tries EasyNews first, then falls back to TorBox or Real-Debrid.
 
-Fetcherr does not expose Stremio catalog search results as Jellyfin library items. Infuse and VidHub should only display media that exists in the Fetcherr library.
-
-## Diagnostics
-
-The in-app Logs page shows recent application logs and add-on provider health. Provider health tracks recent add-on response times, returned stream counts, and failure rates so slow or unreliable add-ons are easier to identify.
-
 ## Connecting Infuse
 
 Add Fetcherr as a Jellyfin server in Infuse with your server URL and a Fetcherr account. Enable **Library Mode**, **Auto Scan**, and **Install InfuseSync Plugin**.
@@ -71,14 +65,6 @@ Add Fetcherr as a Jellyfin server in Infuse with your server URL and a Fetcherr 
 ## Connecting VidHub
 
 Add Fetcherr as a Jellyfin server in VidHub. If prompted for an Emby endpoint, use `http://YOUR_SERVER:9990/emby`.
-
-## Kubernetes
-
-```bash
-kubectl apply -f deploy/kubernetes/fetcherr.yaml
-```
-
-Set `SERVER_URL` in the manifest before applying.
 
 ## Environment
 
