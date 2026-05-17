@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { config } from '../config.js'
 import {
   listMovies, countMovies, getMovieByTmdbId,
@@ -1045,7 +1045,7 @@ function episodeToItem(ep: Episode, show: Show, userId = DEFAULT_ADMIN_USER_ID) 
 
 function createJellyfinToken(userId: string): string {
   purgeExpiredJellyfinTokens()
-  const token = createHash('sha256').update(`${userId}:${Date.now()}:${Math.random()}`).digest('hex')
+  const token = randomBytes(32).toString('hex')
   const expiresAt = Date.now() + JELLYFIN_TOKEN_TTL_MS
   jellyfinTokens.set(token, { userId, expiresAt })
   storeJellyfinToken(token, userId, expiresAt)
@@ -1130,11 +1130,11 @@ function jellyfinSessionInfo(user: AppUser, accessToken: string) {
     Id:              `${user.id}:${accessToken.slice(0, 12)}`,
     UserId:          user.id,
     UserName:        user.username,
-    Client:          'Swiftfin',
-    DeviceName:      'Swiftfin',
+    Client:          'Fetcherr',
+    DeviceName:      'Fetcherr',
     DeviceType:      'Browser',
-    DeviceId:        `swiftfin-${user.id}`,
-    AppName:         'Swiftfin',
+    DeviceId:        `fetcherr-${user.id}`,
+    AppName:         'Fetcherr',
     AppVersion:      '1.0.0',
     ApplicationVersion: '1.0.0',
     PlayableMediaTypes: ['Video'],

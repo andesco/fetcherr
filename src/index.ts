@@ -399,6 +399,10 @@ function directStreamConflictsWithActiveDebrid(stream: { name?: string; title?: 
   return false
 }
 
+function streamClearlyDirectDebrid(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+  return streamClearlyRealDebridCached(stream) || streamClearlyTorBoxCached(stream)
+}
+
 function directPlaybackPenalty(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown>; url?: string }): number {
   if (!isDirectPlaybackUrl(stream.url)) return 0
   const text = streamMetadataText(stream)
@@ -416,6 +420,16 @@ function directPlaybackPenalty(stream: { name?: string; title?: string; descript
   else if (size > 5_000_000_000) penalty += 20
   if (/\b(h\.?264|x264|avc)\b/.test(text)) penalty -= 20
   return penalty
+}
+
+function directStreamPriority(
+  stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown>; url?: string },
+  hash: string | null,
+): number {
+  if (!isDirectPlaybackUrl(stream.url)) return 3
+  if (!hash && !streamClearlyDirectDebrid(stream)) return 0
+  if (hash) return 1
+  return 2
 }
 
 function isRemoteAudioProbeUnreliable(filename: string): boolean {
@@ -447,6 +461,14 @@ function filenameFromDirectPlaybackUrl(url?: string): string | undefined {
   }
 }
 
+function directUrlHost(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return 'unknown host'
+  }
+}
+
 async function resolveDirectPlaybackUrl(url: string): Promise<string> {
   try {
     const res = await fetch(url, {
@@ -468,6 +490,60 @@ async function resolveDirectPlaybackUrl(url: string): Promise<string> {
     app.log.warn(`play: direct playback URL probe failed: ${summarizeProbeError(err)}`)
     return url
   }
+}
+
+async function maybeResolveDirectPlaybackCandidate(
+  stream: Awaited<ReturnType<typeof fetchRankedStreams>>[number],
+  label: string,
+  hint?: string,
+): Promise<PlayResolution | null> {
+  if (!isDirectPlaybackUrl(stream.url)) return null
+  if (directStreamConflictsWithActiveDebrid(stream)) {
+    app.log.info(`play: skipping direct stream for ${label}, marked for another debrid provider`)
+    return null
+  }
+
+  const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
+  if (directFilename && !isVideoFile(directFilename)) {
+    app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
+    return null
+  }
+  if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
+    app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
+    return null
+  }
+  if (
+    directFilename
+    && config.englishStreamMode === 'require'
+    && isRemoteAudioProbeUnreliable(directFilename)
+    && !streamClearlyPreferredLanguage(stream)
+  ) {
+    app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed preferred-language metadata`)
+    return null
+  }
+
+  const isDebridCachedStream = streamClearlyDirectDebrid(stream)
+  if (!isDebridCachedStream && directFilename && shouldProbePreferredAudio(stream, directFilename)) {
+    try {
+      const audioLanguages = await probeAudioLanguages(stream.url)
+      app.log.info(`play: ffprobe audio languages for ${directFilename}: ${audioLanguages.join(', ') || 'none'}`)
+      const noLanguageInfo = audioLanguages.length === 0
+      const allowsUndetermined = (hasOnlyUndeterminedAudio(audioLanguages) || noLanguageInfo) && !streamClearlyNonPreferredLanguage(stream)
+      if (config.englishStreamMode === 'require' && !hasAudioLanguage(audioLanguages, config.preferredAudioLanguage) && !allowsUndetermined) {
+        app.log.info(`play: skipping ${directFilename}, no preferred audio detected`)
+        return null
+      }
+    } catch (err) {
+      app.log.warn(`play: ffprobe failed for ${directFilename}: ${summarizeProbeError(err)}`)
+    }
+  }
+
+  const resolvedUrl = await resolveDirectPlaybackUrl(stream.url)
+  app.log.info(
+    `play: direct HTTP stream selected for ${label} from ${directUrlHost(resolvedUrl)}` +
+    (directFilename ? ` → ${directFilename}` : '')
+  )
+  return { url: resolvedUrl, filename: directFilename, provider: stream.providerLabel }
 }
 
 function shouldProbePreferredAudio(
@@ -529,10 +605,9 @@ async function resolvePlayableStream(
             const aHash = extractHashFromStream(a.stream)
             const bHash = extractHashFromStream(b.stream)
             if (allowDirectUrls) {
-              if (activeDebridProviderName()) {
-                if (aHash && !bHash) return -1
-                if (!aHash && bHash) return 1
-              }
+              const aDirectPriority = directStreamPriority(a.stream, aHash)
+              const bDirectPriority = directStreamPriority(b.stream, bHash)
+              if (aDirectPriority !== bDirectPriority) return aDirectPriority - bDirectPriority
               const aDirectUrl = isDirectPlaybackUrl(a.stream.url)
               const bDirectUrl = isDirectPlaybackUrl(b.stream.url)
               if (aDirectUrl && !bDirectUrl) return -1
@@ -573,12 +648,16 @@ async function resolvePlayableStream(
         }
 
         const hint = streamFilenameHint(stream) ?? fileHint
+        const directOnlyCandidate = !hash && isDirectPlaybackUrl(stream.url)
+        const shouldTryDirectCandidate = directOnlyCandidate
+          && (allowDirectUrls || !streamClearlyDirectDebrid(stream) || directStreamMatchesActiveDebrid(stream))
+
         if (allowDirectUrls && isDirectPlaybackUrl(stream.url)) {
           const activeProvider = activeDebridProviderName()
           if (activeProvider && hash) {
             app.log.info(`play: resolving Stremio hash ${hashLabel}… for ${label} through ${activeProvider} cleanup-managed resolver`)
           } else {
-            const useDirectUrl = !activeProvider || directStreamMatchesActiveDebrid(stream)
+            const useDirectUrl = !activeProvider || directStreamMatchesActiveDebrid(stream) || (!hash && !streamClearlyDirectDebrid(stream))
             if (!useDirectUrl) {
               if (directStreamConflictsWithActiveDebrid(stream) && !hash) {
                 app.log.info(`play: skipping direct Stremio stream for ${label}, marked for another debrid provider while ${activeProvider} is active`)
@@ -592,32 +671,26 @@ async function resolvePlayableStream(
                 continue
               }
             } else {
-              const directFilename = hint ?? filenameFromDirectPlaybackUrl(stream.url)
-              if (directFilename && !isVideoFile(directFilename)) {
-                app.log.info(`play: skipping non-video direct stream ${directFilename}, trying next`)
-                continue
+              const resolvedDirect = await maybeResolveDirectPlaybackCandidate(stream, label, hint)
+              if (resolvedDirect) {
+                clearFailedPlay(cacheKey)
+                return resolvedDirect
               }
-              if (directFilename && isLikelyBadResolvedFilename(directFilename)) {
-                app.log.info(`play: skipping suspicious direct stream ${directFilename}, trying next`)
-                continue
-              }
-              if (
-                directFilename
-                && config.englishStreamMode === 'require'
-                && isRemoteAudioProbeUnreliable(directFilename)
-                && !streamClearlyPreferredLanguage(stream)
-              ) {
-                app.log.info(`play: skipping unprobeable ${directFilename}, no confirmed preferred-language metadata`)
-                continue
-              }
-              app.log.info(`play: direct Stremio stream selected for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
-              clearFailedPlay(cacheKey)
-              return { url: stream.url, filename: directFilename, provider: providerLabel }
+              continue
             }
           }
         }
 
         if (!hash) {
+          if (shouldTryDirectCandidate) {
+            const resolvedDirect = await maybeResolveDirectPlaybackCandidate(stream, label, hint)
+            if (resolvedDirect) {
+              clearFailedPlay(cacheKey)
+              return resolvedDirect
+            }
+            continue
+          }
+
           if (!config.torBoxApiKey || config.directPlaybackMode !== 'all' || !isDirectPlaybackUrl(stream.url)) {
             app.log.info(`play: skipping ${providerLabel} for ${label}, no torrent hash exposed; ${summarizeStreamForLog(stream)}`)
             continue

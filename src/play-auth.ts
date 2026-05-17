@@ -1,14 +1,20 @@
-import { createHmac, timingSafeEqual } from 'crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import { config } from './config.js'
+import { getSetting, setSetting } from './db.js'
 
 const PLAY_TOKEN_TTL_SECS = 5 * 60
+const PLAYBACK_SIGNING_SECRET_KEY = 'playbackSigningSecret'
 
 function playTokenSecret(): string {
-  return [
-    config.rdApiKey,
-    config.traktClientSecret,
-    config.tmdbApiKey,
-  ].filter(Boolean).join('|') || config.serverId
+  const envSecret = process.env.PLAYBACK_SIGNING_SECRET?.trim()
+  if (envSecret) return envSecret
+
+  const stored = getSetting(PLAYBACK_SIGNING_SECRET_KEY)?.trim()
+  if (stored) return stored
+
+  const generated = randomBytes(32).toString('hex')
+  setSetting(PLAYBACK_SIGNING_SECRET_KEY, generated)
+  return generated
 }
 
 function signPlayPath(path: string, expires: number): string {
@@ -47,7 +53,7 @@ export function createSignedPlaybackUrl(origin: string, path: string): string {
 export function verifySignedPlaybackPath(path: string, token?: string, expiresRaw?: string): boolean {
   if (!token || !expiresRaw) return false
   const expires = Number.parseInt(expiresRaw, 10)
-  if (!Number.isFinite(expires) || expires < Math.floor(Date.now() / 1000)) return false
+  if (!Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000)) return false
 
   const expected = signPlayPath(path, expires)
   const tokenBuf = Buffer.from(token)

@@ -11,8 +11,15 @@ export interface LogEntry {
 const MAX = 1000
 const buf: LogEntry[] = []
 
+function redactSensitiveValues(value: string): string {
+  return value
+    .replace(/\b(token|apikey|api_key|access_token|refresh_token|client_secret|password)=([^&\s]+)/gi, '$1=:redacted')
+    .replace(/\b(Authorization:\s*Bearer\s+)[^\s,}]+/gi, '$1:redacted')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/g, '$1:redacted')
+}
+
 function add(level: LogEntry['level'], msg: string) {
-  buf.push({ time: new Date().toISOString(), level, msg })
+  buf.push({ time: new Date().toISOString(), level, msg: redactSensitiveValues(msg) })
   if (buf.length > MAX) buf.shift()
 }
 
