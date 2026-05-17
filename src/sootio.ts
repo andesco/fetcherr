@@ -84,6 +84,13 @@ function hasUsableUrl(s: Stream): boolean {
   return (typeof s.url === 'string' && s.url.length > 0) || extractHashFromStream(s) !== null
 }
 
+function isNotWebReadyDirectStream(s: Stream): boolean {
+  return s.behaviorHints?.notWebReady === true
+    && typeof s.url === 'string'
+    && s.url.length > 0
+    && extractHashFromStream(s) === null
+}
+
 function cachedScore(s: Stream): number {
   const text = streamText(s)
   if (/\btorbox\s*\(\s*instant\s*\)|\btorbox\s*\(\s*cached\s*\)|\binstant\s*\(\s*tb\s*\)|\[rd\+\]|\[rd ⚡\]|\[rd⚡\]|\brd\+\b|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|\bready\s*\(\s*tb\s*\)|⚡|cached/.test(text)) return 2
@@ -358,7 +365,7 @@ function clientCompatibilityPenalty(s: Stream, clientName = ''): number {
 }
 
 function playableStreamsInProviderOrder(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
-  const usable = streams.filter(hasUsableUrl)
+  const usable = streams.filter(hasUsableUrl).filter(s => !isNotWebReadyDirectStream(s))
   const preferred = usable.filter(s => !isLikelyBadStream(s))
   const basePool = preferred.length ? preferred : usable
   return validYears(ctx).length
@@ -552,6 +559,10 @@ export async function fetchRankedStreams(
 ): Promise<Stream[]> {
   const streams = await fetchStreamsFromProviders(`/stream/movie/${imdbId}.json`)
   if (!streams.length) throw new Error(`No streams found for ${imdbId}`)
+  const notWebReadyDirectStreams = streams.filter(isNotWebReadyDirectStream).length
+  if (notWebReadyDirectStreams) {
+    console.log(`streams: ignored ${notWebReadyDirectStreams} notWebReady direct stream${notWebReadyDirectStreams === 1 ? '' : 's'} for ${imdbId}`)
+  }
   const ctx = { preferredLanguage, mediaLanguage, playbackClient }
   const ranked = preserveProviderOrder
     ? playableStreamsInProviderOrder(streams, ctx)
@@ -582,6 +593,10 @@ export async function fetchRankedEpisodeStreams(
 ): Promise<Stream[]> {
   const streams = await fetchStreamsFromProviders(`/stream/series/${imdbId}:${season}:${episode}.json`)
   if (!streams.length) throw new Error(`No streams found for ${imdbId} S${season}E${episode}`)
+  const notWebReadyDirectStreams = streams.filter(isNotWebReadyDirectStream).length
+  if (notWebReadyDirectStreams) {
+    console.log(`streams: ignored ${notWebReadyDirectStreams} notWebReady direct stream${notWebReadyDirectStreams === 1 ? '' : 's'} for ${imdbId} S${season}E${episode}`)
+  }
   const ctx = { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient }
   const ranked = preserveProviderOrder
     ? playableStreamsInProviderOrder(streams, ctx)
