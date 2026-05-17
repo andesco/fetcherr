@@ -15,7 +15,7 @@ import {
   rehydrateTorBoxCleanupJobs,
   touchDownloadUrl as touchTorBoxDownloadUrl,
 } from './torbox.js'
-import { getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
+import { getShowByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, isEpisodeVisibleToLibrary, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
 import { verifySignedPlaybackPath } from './play-auth.js'
@@ -596,8 +596,8 @@ async function resolvePlayableStream(
     const attemptedTorBoxResolutions = new Set<string>()
     const failedRdHashes = new Map<string, string>()
     const failedTorBoxHashes = new Map<string, string>()
-    app.log.info(`play: trying ${streams.length} ranked candidate${streams.length === 1 ? '' : 's'} for ${label}`)
-    const orderedStreams = config.streamRankingMode === 'provider'
+    app.log.info(`play: trying ${streams.length} ordered candidate${streams.length === 1 ? '' : 's'} for ${label}`)
+    const orderedStreams = allowDirectUrls || config.streamRankingMode === 'provider'
       ? streams
       : streams
           .map((stream, index) => ({ stream, index }))
@@ -959,8 +959,8 @@ async function resolvePlayableStream(
 
 async function resolveMoviePlayback(imdbId: string, playbackClient = ''): Promise<PlayResolution> {
   const playPath = `/play/${imdbId}`
-  const streams = await fetchRankedStreams(imdbId, config.preferredAudioLanguage, '', playbackClient)
-  return resolvePlayableStream(streams, imdbId, playPath)
+  const streams = await fetchRankedStreams(imdbId, config.preferredAudioLanguage, '', playbackClient, true)
+  return resolvePlayableStream(streams, imdbId, playPath, undefined, true)
 }
 
 async function resolveEpisodePlayback(imdbId: string, season: number, episodeNumber: number, playbackClient = ''): Promise<PlayResolution> {
@@ -969,6 +969,13 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
   const episode = show
     ? getEpisodesForSeason(show.tmdbId, season).find(ep => ep.episodeNumber === episodeNumber)
     : null
+  if (episode && !isEpisodeVisibleToLibrary(episode)) {
+    throw new PlaybackResolutionError(
+      'Episode not yet available',
+      409,
+      { error: 'Episode not yet available', message: 'Not Yet Aired' },
+    )
+  }
   const episodeAirYear = episode?.airDate ? Number.parseInt(episode.airDate.slice(0, 4), 10) : undefined
   const streams = await fetchRankedEpisodeStreams(
     imdbId,
@@ -979,12 +986,14 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
     config.preferredAudioLanguage,
     '',
     playbackClient,
+    true,
   )
   return resolvePlayableStream(
     streams,
     `${imdbId} S${season}E${episodeNumber}`,
     playPath,
     `s${pad2(season)}e${pad2(episodeNumber)}`,
+    true,
   )
 }
 

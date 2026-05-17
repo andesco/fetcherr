@@ -357,13 +357,17 @@ function clientCompatibilityPenalty(s: Stream, clientName = ''): number {
   return penalty
 }
 
-function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
+function playableStreamsInProviderOrder(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
   const usable = streams.filter(hasUsableUrl)
   const preferred = usable.filter(s => !isLikelyBadStream(s))
   const basePool = preferred.length ? preferred : usable
-  const pool = validYears(ctx).length
+  return validYears(ctx).length
     ? basePool.filter(s => !hasExplicitYearMismatch(s, ctx))
     : basePool
+}
+
+function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
+  const pool = playableStreamsInProviderOrder(streams, ctx)
 
   if (config.streamRankingMode === 'provider') {
     return pool
@@ -544,11 +548,15 @@ export async function fetchRankedStreams(
   preferredLanguage = config.preferredAudioLanguage,
   mediaLanguage = '',
   playbackClient = '',
+  preserveProviderOrder = false,
 ): Promise<Stream[]> {
   const streams = await fetchStreamsFromProviders(`/stream/movie/${imdbId}.json`)
   if (!streams.length) throw new Error(`No streams found for ${imdbId}`)
-  const ranked = rankStreams(streams, { preferredLanguage, mediaLanguage, playbackClient })
-  const summaries = ranked.map(stream => precomputeScore(stream, { preferredLanguage, mediaLanguage, playbackClient }))
+  const ctx = { preferredLanguage, mediaLanguage, playbackClient }
+  const ranked = preserveProviderOrder
+    ? playableStreamsInProviderOrder(streams, ctx)
+    : rankStreams(streams, ctx)
+  const summaries = ranked.map(stream => precomputeScore(stream, ctx))
   console.log(`streams: top candidates for ${imdbId}`)
   for (const score of summaries.slice(0, 5)) {
     console.log(`streams: ${scoreSummary(score)} :: ${score.stream.title || score.stream.name}`)
@@ -570,11 +578,15 @@ export async function fetchRankedEpisodeStreams(
   preferredLanguage = config.preferredAudioLanguage,
   mediaLanguage = '',
   playbackClient = '',
+  preserveProviderOrder = false,
 ): Promise<Stream[]> {
   const streams = await fetchStreamsFromProviders(`/stream/series/${imdbId}:${season}:${episode}.json`)
   if (!streams.length) throw new Error(`No streams found for ${imdbId} S${season}E${episode}`)
-  const ranked = rankStreams(streams, { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient })
-  const summaries = ranked.map(stream => precomputeScore(stream, { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient }))
+  const ctx = { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient }
+  const ranked = preserveProviderOrder
+    ? playableStreamsInProviderOrder(streams, ctx)
+    : rankStreams(streams, ctx)
+  const summaries = ranked.map(stream => precomputeScore(stream, ctx))
   if (!ranked.length) throw new Error(`No year-matched streams found for ${imdbId} S${season}E${episode}`)
   console.log(`streams: top candidates for ${imdbId} S${season}E${episode}`)
   for (const score of summaries.slice(0, 5)) {

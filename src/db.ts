@@ -718,8 +718,16 @@ export interface ListOpts {
   userId?: string
 }
 
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10)
+export function todayIsoDate(): string {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function isEpisodeVisibleToLibrary(episode: Pick<Episode, 'airDate'>): boolean {
+  return !!episode.airDate && episode.airDate < todayIsoDate()
 }
 
 export function getMovieEligibleDate(
@@ -998,12 +1006,13 @@ function showAvailabilityWhere(availableOnly: boolean): string {
     )`,
   ]
   if (availableOnly) {
+    const today = sqlStringLiteral(todayIsoDate())
     clauses.push(`EXISTS (
       SELECT 1
       FROM episodes
       WHERE episodes.show_tmdb_id = shows.tmdb_id
         AND episodes.air_date != ''
-        AND episodes.air_date <= date('now')
+        AND episodes.air_date < ${today}
     )`)
   }
   return `WHERE ${clauses.join('\n  AND ')}`
@@ -1218,10 +1227,10 @@ export function getEpisodesForSeason(showTmdbId: number, seasonNumber: number): 
 }
 
 export function getAiredEpisodesForSeason(showTmdbId: number, seasonNumber: number): Episode[] {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayIsoDate()
   return (getDb().prepare(
     `SELECT * FROM episodes WHERE show_tmdb_id = ? AND season_number = ?
-     AND air_date != '' AND air_date <= ? ORDER BY episode_number ASC`
+     AND air_date != '' AND air_date < ? ORDER BY episode_number ASC`
   ).all(showTmdbId, seasonNumber, today) as Record<string, unknown>[]).map(row2episode)
 }
 
@@ -1238,17 +1247,17 @@ export function getAllSeasons(): Season[] {
 }
 
 export function getAllAiredEpisodes(): Episode[] {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayIsoDate()
   return (getDb().prepare(
-    `SELECT * FROM episodes WHERE air_date != '' AND air_date <= ?
+    `SELECT * FROM episodes WHERE air_date != '' AND air_date < ?
      ORDER BY show_tmdb_id ASC, season_number ASC, episode_number ASC`
   ).all(today) as Record<string, unknown>[]).map(row2episode)
 }
 
 export function countAiredEpisodes(): number {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayIsoDate()
   return (getDb().prepare(
-    `SELECT COUNT(*) as n FROM episodes WHERE air_date != '' AND air_date <= ?`
+    `SELECT COUNT(*) as n FROM episodes WHERE air_date != '' AND air_date < ?`
   ).get(today) as { n: number }).n
 }
 
@@ -1729,6 +1738,7 @@ export function listLatestSeasonShowSubscriptions(): ManualShowSubscription[] {
 }
 
 export function materializeShowDefaultModeForExistingLibrary(mode: ManualShowMode): number {
+  const today = sqlStringLiteral(todayIsoDate())
   const latestSeasonNumberExpr = `
     COALESCE((
       SELECT MAX(s.season_number)
@@ -1736,7 +1746,7 @@ export function materializeShowDefaultModeForExistingLibrary(mode: ManualShowMod
       WHERE s.show_tmdb_id = si.tmdb_id
         AND s.season_number > 0
         AND s.air_date != ''
-        AND s.air_date <= date('now')
+        AND s.air_date < ${today}
     ), (
       SELECT MAX(s.season_number)
       FROM seasons s
@@ -1770,14 +1780,14 @@ export function removeManualShowSubscription(showTmdbId: number): number {
 }
 
 export function getLatestSeasonNumberForShow(showTmdbId: number): number | null {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayIsoDate()
   const aired = getDb().prepare(`
     SELECT MAX(season_number) as n
     FROM seasons
     WHERE show_tmdb_id = ?
       AND season_number > 0
       AND air_date != ''
-      AND air_date <= ?
+      AND air_date < ?
   `).get(showTmdbId, today) as { n: number | null }
   if (aired.n) return aired.n
 
@@ -1965,13 +1975,13 @@ export function listSourceKeysForItems(mediaType: MediaType, tmdbIds: number[]):
 export function listAiredShowTmdbIds(showTmdbIds: number[]): Set<number> {
   const ids = uniqTmdbIds(showTmdbIds)
   if (!ids.length) return new Set()
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayIsoDate()
   const rows = getDb().prepare(`
     SELECT DISTINCT show_tmdb_id
     FROM episodes
     WHERE show_tmdb_id IN (${sqlPlaceholders(ids.length)})
       AND air_date != ''
-      AND air_date <= ?
+      AND air_date < ?
   `).all(...ids, today) as Array<{ show_tmdb_id: number }>
   return new Set(rows.map(row => row.show_tmdb_id))
 }

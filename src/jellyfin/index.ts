@@ -5,7 +5,7 @@ import {
   listMovies, countMovies, getMovieByTmdbId,
   listUsers, getUserData, saveProgress, markPlayed, markUnplayed, listResumeItemIds, countResumeItems, getAllPlayedItemIds,
   getEffectiveShowMode, listShows, countShows, getShowByTmdbId,
-  getSeasonsForShow, getSeason, getEpisodesForSeason, getAiredEpisodesForSeason, isMovieVisibleToLibrary, hasAnySourceItem,
+  getSeasonsForShow, getSeason, getEpisodesForSeason, getAiredEpisodesForSeason, isMovieVisibleToLibrary, isEpisodeVisibleToLibrary, hasAnySourceItem,
   authEnabled, canUserAccessMovie, canUserAccessShow, getDb, getUserById, getUserByUsername, verifyUserCredentials, DEFAULT_ADMIN_USER_ID, isLibraryItemHidden, listSourceItems, type AppUser,
 } from '../db.js'
 import {
@@ -1701,6 +1701,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         ep = eps.find(e => e.episodeNumber === epRef.episodeNum)!
       }
       if (!ep) return reply.code(404).send({ error: 'Not found' })
+      if (!isEpisodeVisibleToLibrary(ep)) return reply.code(404).send({ error: 'Not found' })
       return episodeToItem(ep, show, currentUser.id)
     }
 
@@ -2069,6 +2070,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       if (!ep) {
         const eps = await fetchAndCacheSeasonDetails(show.tmdbId, epRef.seasonNum).catch(() => [])
         ep = eps.find(e => e.episodeNumber === epRef.episodeNum)!
+      }
+      if (!ep || !isEpisodeVisibleToLibrary(ep)) {
+        return reply.code(409).send({ error: 'Episode not yet available', message: 'Not Yet Aired' })
       }
       const playPath = `/play/${show.imdbId}/${epRef.seasonNum}/${epRef.episodeNum}`
       const playUrl = createSignedPlaybackUrl(buildPlaybackOrigin(req.headers), playPath)

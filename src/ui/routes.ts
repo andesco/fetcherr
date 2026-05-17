@@ -195,7 +195,11 @@ function tmdbToShowGuid(tmdbId: number) {
 }
 
 function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function parseLibraryStatusFilter(value: string | undefined): LibraryStatusFilter {
@@ -651,8 +655,8 @@ export async function uiRoutes(app: FastifyInstance) {
     const today = todayIsoDate()
     const episodes = getEpisodesForShow(show.tmdbId)
     const hidden = isLibraryItemHidden('show', show.tmdbId)
-    const visibleToInfuse = !hidden && episodes.some(e => !!e.airDate && e.airDate <= today)
-    const nextEpisode = episodes.find(e => !!e.airDate && e.airDate > today) ?? null
+    const visibleToInfuse = !hidden && episodes.some(e => !!e.airDate && e.airDate < today)
+    const nextEpisode = episodes.find(e => !!e.airDate && e.airDate >= today) ?? null
     const sources = sourceSummaryForItem('show', show.tmdbId)
 
     return {
