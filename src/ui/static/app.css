@@ -192,6 +192,15 @@ select:disabled {
   line-height: 1;
 }
 
+.auth-version {
+  margin: -10px 0 18px;
+  color: rgba(154, 168, 186, .72);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  text-align: center;
+}
+
 .topbar-right {
   display: flex;
   align-items: center;
@@ -2363,7 +2372,12 @@ body.auth-page::after {
   }
 
   .brand-version {
-    display: none;
+    display: block;
+    max-width: 72px;
+    overflow: hidden;
+    font-size: 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .shell {

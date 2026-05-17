@@ -10,6 +10,7 @@
 <body class="auth-page setup-admin-page">
   <form class="card" onsubmit="createAdmin(event)">
     <div class="logo"><img src="/ui/static/fetcherr.svg" alt="Fetcherr"></div>
+    <div class="auth-version" title="__APP_VERSION_TITLE__">__APP_VERSION_LABEL__</div>
     <h1>Create Admin Account</h1>
     <p class="sub">Finish first-time setup by creating the initial admin account. All other server settings can be configured after sign-in.</p>
 
@@ -49,10 +50,10 @@
         }
         const d = await res.json().catch(() => ({}))
         err.textContent = d.error || 'Unable to create admin account'
-        err.style.display = ''
+        err.style.display = 'block'
       } catch {
         err.textContent = 'Network error. Please try again.'
-        err.style.display = ''
+        err.style.display = 'block'
       } finally {
         btn.disabled = false
         btn.textContent = 'Create Admin'

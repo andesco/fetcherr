@@ -369,7 +369,7 @@ export async function uiRoutes(app: FastifyInstance) {
       return { ok: true }
     }
     state.count += 1
-    return reply.code(401).send({ error: 'Invalid credentials' })
+    return reply.code(401).send({ error: 'Incorrect username or password.' })
   })
 
   app.post('/ui/auth/logout', async (req, reply) => {
