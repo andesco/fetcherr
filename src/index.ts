@@ -354,11 +354,6 @@ function streamClearlyNonPreferredLanguage(stream: { name?: string; title?: stri
   return hasNonPreferred && !hasPreferred
 }
 
-function streamClearlyUsenetBacked(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
-  const text = streamMetadataText(stream)
-  return /\busenet\b|\bnewznab\b/.test(text)
-}
-
 function streamClearlyTorBoxCached(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
   const text = streamMetadataText(stream)
   return /\btorbox\s*\(\s*(instant|cached)\s*\)|\binstant\s*\(\s*tb\s*\)|\[tb\+\]|\[tb ⚡\]|\[tb⚡\]|\btb\+\b|\bready\s*\(\s*tb\s*\)/.test(text)
@@ -403,6 +398,10 @@ function streamClearlyDirectDebrid(stream: { name?: string; title?: string; desc
   return streamClearlyRealDebridCached(stream) || streamClearlyTorBoxCached(stream)
 }
 
+function streamMarkedNotWebReady(stream: { behaviorHints?: Record<string, unknown> }): boolean {
+  return stream.behaviorHints?.notWebReady === true
+}
+
 function directPlaybackPenalty(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown>; url?: string }): number {
   if (!isDirectPlaybackUrl(stream.url)) return 0
   const text = streamMetadataText(stream)
@@ -420,16 +419,6 @@ function directPlaybackPenalty(stream: { name?: string; title?: string; descript
   else if (size > 5_000_000_000) penalty += 20
   if (/\b(h\.?264|x264|avc)\b/.test(text)) penalty -= 20
   return penalty
-}
-
-function directStreamPriority(
-  stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown>; url?: string },
-  hash: string | null,
-): number {
-  if (!isDirectPlaybackUrl(stream.url)) return 3
-  if (!hash && !streamClearlyDirectDebrid(stream)) return 0
-  if (hash) return 1
-  return 2
 }
 
 function isRemoteAudioProbeUnreliable(filename: string): boolean {
@@ -523,6 +512,11 @@ async function maybeResolveDirectPlaybackCandidate(
   }
 
   const isDebridCachedStream = streamClearlyDirectDebrid(stream)
+  if (!isDebridCachedStream && streamMarkedNotWebReady(stream)) {
+    app.log.info(`play: skipping notWebReady direct stream for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
+    return null
+  }
+
   if (!isDebridCachedStream && directFilename && shouldProbePreferredAudio(stream, directFilename)) {
     try {
       const audioLanguages = await probeAudioLanguages(stream.url)
@@ -604,28 +598,6 @@ async function resolvePlayableStream(
           .sort((a, b) => {
             const aHash = extractHashFromStream(a.stream)
             const bHash = extractHashFromStream(b.stream)
-            if (allowDirectUrls) {
-              const aDirectPriority = directStreamPriority(a.stream, aHash)
-              const bDirectPriority = directStreamPriority(b.stream, bHash)
-              if (aDirectPriority !== bDirectPriority) return aDirectPriority - bDirectPriority
-              const aDirectUrl = isDirectPlaybackUrl(a.stream.url)
-              const bDirectUrl = isDirectPlaybackUrl(b.stream.url)
-              if (aDirectUrl && !bDirectUrl) return -1
-              if (!aDirectUrl && bDirectUrl) return 1
-              if (aDirectUrl && bDirectUrl) {
-                if (activeDebridProviderName()) {
-                  const aMatches = directStreamMatchesActiveDebrid(a.stream)
-                  const bMatches = directStreamMatchesActiveDebrid(b.stream)
-                  if (aMatches && !bMatches) return -1
-                  if (!aMatches && bMatches) return 1
-                  const aConflicts = directStreamConflictsWithActiveDebrid(a.stream)
-                  const bConflicts = directStreamConflictsWithActiveDebrid(b.stream)
-                  if (aConflicts && !bConflicts) return 1
-                  if (!aConflicts && bConflicts) return -1
-                }
-                return directPlaybackPenalty(a.stream) - directPlaybackPenalty(b.stream) || a.index - b.index
-              }
-            }
             const aDirect = !aHash && isDirectPlaybackUrl(a.stream.url)
             const bDirect = !bHash && isDirectPlaybackUrl(b.stream.url)
             if (aHash && !bHash) return -1
