@@ -21,6 +21,19 @@ interface TbResponse<T> {
   data?:    T
 }
 
+class TorBoxApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+    readonly code: string | null,
+    readonly detail: string | null,
+    readonly body: string,
+  ) {
+    super(message)
+    this.name = 'TorBoxApiError'
+  }
+}
+
 interface TbCreateResult {
   torrent_id: number
   name?:      string
@@ -91,17 +104,36 @@ async function tbFetch<T>(
 
   if (res.status === 204) return null as T
   const text = await res.text()
+  let parsed: TbResponse<T> | null = null
+  if (text) {
+    try {
+      parsed = JSON.parse(text) as TbResponse<T>
+    } catch {
+      parsed = null
+    }
+  }
   if (!res.ok) {
-    const message = `TB ${method} ${path} → ${res.status}: ${text}`
+    const code = parsed?.error ?? null
+    const detail = parsed?.detail ?? null
+    const suffix = code || detail ? `${code ?? 'error'}${detail ? `: ${detail}` : ''}` : text
+    const message = `TB ${method} ${path} → ${res.status}: ${suffix}`
     if (res.status === 401 || res.status === 403 || res.status === 429 || res.status >= 500) {
       throw new ProviderUnavailableError(message, res.status)
     }
-    throw new Error(message)
+    throw new TorBoxApiError(message, res.status, code, detail, text)
   }
   if (!text) return null as T
-  const parsed = JSON.parse(text) as TbResponse<T>
+  if (!parsed) throw new Error(`TB ${method} ${path} returned invalid JSON`)
   if (!parsed.success) {
-    throw new Error(`TB ${method} ${path} error: ${parsed.error ?? parsed.detail ?? 'unknown'}`)
+    const code = parsed.error ?? null
+    const detail = parsed.detail ?? null
+    throw new TorBoxApiError(
+      `TB ${method} ${path} error: ${code ?? detail ?? 'unknown'}`,
+      res.status,
+      code,
+      detail,
+      text,
+    )
   }
   return parsed.data as T
 }
@@ -115,9 +147,9 @@ async function createTorrent(magnet: string): Promise<TbCreateResult> {
 }
 
 function isCreateTorrentCacheMiss(err: unknown): boolean {
+  if (err instanceof TorBoxApiError && err.code === 'DOWNLOAD_NOT_CACHED') return true
   if (!(err instanceof Error)) return false
-  const message = err.message.toLowerCase()
-  return message.includes('cached') && (message.includes('not') || message.includes('add_only_if_cached'))
+  return /\btorrent not found in cache\b/i.test(err.message)
 }
 
 async function getTorrentInfo(torrentId: number): Promise<TbTorrentInfo> {
