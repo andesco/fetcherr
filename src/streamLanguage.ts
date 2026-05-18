@@ -130,12 +130,22 @@ function languageAliases(language: string): string[] {
   }
 }
 
-function hasLanguageMarker(text: string, language: string): boolean {
-  const aliases = languageAliases(language)
-  return aliases.some(alias => {
+const languageMarkerCache = new Map<string, RegExp[]>()
+
+function languageMarkerPatterns(language: string): RegExp[] {
+  const normalized = normalizeLanguageCode(language)
+  const cached = languageMarkerCache.get(normalized)
+  if (cached) return cached
+  const patterns = languageAliases(normalized).map(alias => {
     const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    return new RegExp(`\\b${escaped}\\b`, 'u').test(text)
+    return new RegExp(`\\b${escaped}\\b`, 'u')
   })
+  languageMarkerCache.set(normalized, patterns)
+  return patterns
+}
+
+function hasLanguageMarker(text: string, language: string): boolean {
+  return languageMarkerPatterns(language).some(pattern => pattern.test(text))
 }
 
 function languagePenalty(text: string, preferredLanguage: string): number {

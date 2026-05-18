@@ -3,6 +3,7 @@ import {
   hasPreferredAudioMarker,
   nonPreferredAudioPenalty,
 } from './streamLanguage.js'
+import { streamMetadataText } from './streamUtils.js'
 
 export interface Stream {
   name:          string
@@ -73,11 +74,6 @@ export function getProviderFetchMetrics(): ProviderFetchMetric[] {
 
 function streamText(s: Stream): string {
   return `${s.name ?? ''} ${s.title ?? ''} ${s.description ?? ''} ${s.url ?? ''} ${(s.sources ?? []).join(' ')}`.toLowerCase()
-}
-
-function streamMetadataText(s: Stream): string {
-  const filename = typeof s.behaviorHints?.filename === 'string' ? s.behaviorHints.filename : ''
-  return `${s.name ?? ''} ${s.title ?? ''} ${s.description ?? ''} ${filename}`.toLowerCase()
 }
 
 function hasUsableUrl(s: Stream): boolean {
@@ -373,35 +369,33 @@ function playableStreamsInProviderOrder(streams: Stream[], ctx: StreamRankContex
     : basePool
 }
 
-function rankStreams(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
+function rankStreamScores(streams: Stream[], ctx: StreamRankContext = {}): RankedStreamScore[] {
   const pool = playableStreamsInProviderOrder(streams, ctx)
+  const scores = pool.map(stream => precomputeScore(stream, ctx))
 
   if (config.streamRankingMode === 'provider') {
-    return pool
+    return scores
   }
 
-  return pool
-    .map(stream => precomputeScore(stream, ctx))
-    .sort((a, b) =>
-      b.cached - a.cached
-      || a.languagePenalty - b.languagePenalty
-      || a.unprobeableAudioPenalty - b.unprobeableAudioPenalty
-      || a.regionalPenalty - b.regionalPenalty
-      || a.junkPenalty - b.junkPenalty
-      || b.yearScore - a.yearScore
-      || b.episodeSpecificity - a.episodeSpecificity
-      || b.resolution - a.resolution
-      || b.source - a.source
-      || b.sizeQuality - a.sizeQuality
-      || b.codec - a.codec
-      || a.clientCompatibilityPenalty - b.clientCompatibilityPenalty
-      || (config.englishStreamMode === 'off' ? 0 : b.preferredLanguage - a.preferredLanguage)
-      || b.mediaLanguage - a.mediaLanguage
-      || b.container - a.container
-      || b.size - a.size
-      || ((a.stream.providerOrder ?? 999) - (b.stream.providerOrder ?? 999))
-    )
-    .map(score => score.stream)
+  return scores.sort((a, b) =>
+    b.cached - a.cached
+    || a.languagePenalty - b.languagePenalty
+    || a.unprobeableAudioPenalty - b.unprobeableAudioPenalty
+    || a.regionalPenalty - b.regionalPenalty
+    || a.junkPenalty - b.junkPenalty
+    || b.yearScore - a.yearScore
+    || b.episodeSpecificity - a.episodeSpecificity
+    || b.resolution - a.resolution
+    || b.source - a.source
+    || b.sizeQuality - a.sizeQuality
+    || b.codec - a.codec
+    || a.clientCompatibilityPenalty - b.clientCompatibilityPenalty
+    || (config.englishStreamMode === 'off' ? 0 : b.preferredLanguage - a.preferredLanguage)
+    || b.mediaLanguage - a.mediaLanguage
+    || b.container - a.container
+    || b.size - a.size
+    || ((a.stream.providerOrder ?? 999) - (b.stream.providerOrder ?? 999))
+  )
 }
 
 function providerBases(): string[] {
@@ -564,10 +558,10 @@ export async function fetchRankedStreams(
     console.log(`streams: ignored ${notWebReadyDirectStreams} notWebReady direct stream${notWebReadyDirectStreams === 1 ? '' : 's'} for ${imdbId}`)
   }
   const ctx = { preferredLanguage, mediaLanguage, playbackClient }
-  const ranked = preserveProviderOrder
-    ? playableStreamsInProviderOrder(streams, ctx)
-    : rankStreams(streams, ctx)
-  const summaries = ranked.map(stream => precomputeScore(stream, ctx))
+  const summaries = preserveProviderOrder
+    ? playableStreamsInProviderOrder(streams, ctx).map(stream => precomputeScore(stream, ctx))
+    : rankStreamScores(streams, ctx)
+  const ranked = summaries.map(score => score.stream)
   console.log(`streams: top candidates for ${imdbId}`)
   for (const score of summaries.slice(0, 5)) {
     console.log(`streams: ${scoreSummary(score)} :: ${score.stream.title || score.stream.name}`)
@@ -598,10 +592,10 @@ export async function fetchRankedEpisodeStreams(
     console.log(`streams: ignored ${notWebReadyDirectStreams} notWebReady direct stream${notWebReadyDirectStreams === 1 ? '' : 's'} for ${imdbId} S${season}E${episode}`)
   }
   const ctx = { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient }
-  const ranked = preserveProviderOrder
-    ? playableStreamsInProviderOrder(streams, ctx)
-    : rankStreams(streams, ctx)
-  const summaries = ranked.map(stream => precomputeScore(stream, ctx))
+  const summaries = preserveProviderOrder
+    ? playableStreamsInProviderOrder(streams, ctx).map(stream => precomputeScore(stream, ctx))
+    : rankStreamScores(streams, ctx)
+  const ranked = summaries.map(score => score.stream)
   if (!ranked.length) throw new Error(`No year-matched streams found for ${imdbId} S${season}E${episode}`)
   console.log(`streams: top candidates for ${imdbId} S${season}E${episode}`)
   for (const score of summaries.slice(0, 5)) {

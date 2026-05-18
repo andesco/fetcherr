@@ -113,6 +113,7 @@
         <div class="input-row">
           <input id="rdApiKey" type="password" placeholder="Enter your Real-Debrid API key" oninput="onApiKeyInput('rd')">
           <button id="rdValidateBtn" class="btn btn-sm" onclick="validateRD()" hidden>Validate</button>
+          <button id="rdClearBtn" class="btn btn-sm btn-danger" onclick="toggleClearApiKey('rd')" hidden>Clear</button>
         </div>
         <div class="field-note">Real-Debrid resolves cached torrent streams for playback.</div>
       </div>
@@ -121,6 +122,7 @@
         <div class="input-row">
           <input id="torBoxApiKey" type="password" placeholder="Enter your TorBox API key" oninput="onApiKeyInput('tb')">
           <button id="tbValidateBtn" class="btn btn-sm" onclick="validateTorBox()" hidden>Validate</button>
+          <button id="tbClearBtn" class="btn btn-sm btn-danger" onclick="toggleClearApiKey('tb')" hidden>Clear</button>
         </div>
         <div class="field-note">TorBox resolves cached torrent streams for playback.</div>
       </div>
@@ -361,6 +363,8 @@
   let traktAuthTimeoutId = null
   let hasStoredRdApiKey = false
   let hasStoredTorBoxApiKey = false
+  let clearRdApiKey = false
+  let clearTorBoxApiKey = false
   let hasStoredTmdbApiKey = false
   let hasStoredTvdbApiKey = false
   let hasStoredTraktClientSecret = false
@@ -501,16 +505,22 @@
     rd: {
       inputId: 'rdApiKey',
       buttonId: 'rdValidateBtn',
+      clearButtonId: 'rdClearBtn',
       badgeId: 'rdConfigState',
       label: 'Real-Debrid',
       hasStored: () => hasStoredRdApiKey,
+      isClearRequested: () => clearRdApiKey,
+      setClearRequested: value => { clearRdApiKey = value },
     },
     tb: {
       inputId: 'torBoxApiKey',
       buttonId: 'tbValidateBtn',
+      clearButtonId: 'tbClearBtn',
       badgeId: 'tbConfigState',
       label: 'TorBox',
       hasStored: () => hasStoredTorBoxApiKey,
+      isClearRequested: () => clearTorBoxApiKey,
+      setClearRequested: value => { clearTorBoxApiKey = value },
     },
     tmdb: {
       inputId: 'tmdbApiKey',
@@ -542,12 +552,23 @@
     if (!cfg) return
     const input = document.getElementById(cfg.inputId)
     const button = document.getElementById(cfg.buttonId)
+    const clearButton = cfg.clearButtonId ? document.getElementById(cfg.clearButtonId) : null
+    const clearRequested = cfg.isClearRequested ? cfg.isClearRequested() : false
     const hasNewValue = input.value.trim().length > 0
-    input.disabled = false
+    input.disabled = clearRequested
     button.hidden = !hasNewValue
     button.disabled = false
+    if (clearButton) {
+      clearButton.hidden = !cfg.hasStored()
+      clearButton.textContent = clearRequested ? 'Undo' : 'Clear'
+    }
 
-    if (hasNewValue) {
+    if (clearRequested) {
+      input.value = ''
+      input.placeholder = `${cfg.label} API key will be removed on save`
+      button.hidden = true
+      setConfigStateBadge(service, 'Will Clear', 'pending')
+    } else if (hasNewValue) {
       setConfigStateBadge(service, 'Needs Validation', 'pending')
     } else if (cfg.hasStored()) {
       setConfigStateBadge(service, 'Connected', 'ok')
@@ -557,6 +578,15 @@
   }
 
   function onApiKeyInput(service) {
+    const cfg = apiCredentialUi[service]
+    if (cfg?.setClearRequested) cfg.setClearRequested(false)
+    setApiStoredStatus(service)
+  }
+
+  function toggleClearApiKey(service) {
+    const cfg = apiCredentialUi[service]
+    if (!cfg?.setClearRequested || !cfg.isClearRequested) return
+    cfg.setClearRequested(!cfg.isClearRequested())
     setApiStoredStatus(service)
   }
 
@@ -583,6 +613,8 @@
     const d = await res.json()
     hasStoredRdApiKey = !!d.hasRdApiKey
     hasStoredTorBoxApiKey = !!d.hasTorBoxApiKey
+    clearRdApiKey = false
+    clearTorBoxApiKey = false
     hasStoredTmdbApiKey = !!d.hasTmdbApiKey
     hasStoredTvdbApiKey = !!d.hasTvdbApiKey
     hasStoredTraktClientSecret = !!d.hasTraktClientSecret
@@ -987,6 +1019,8 @@
       mdblistLists: document.getElementById('mdblistLists').value,
       ...(rdApiKey ? { rdApiKey } : {}),
       ...(torBoxApiKey ? { torBoxApiKey } : {}),
+      ...(clearRdApiKey ? { rdApiKey: '' } : {}),
+      ...(clearTorBoxApiKey ? { torBoxApiKey: '' } : {}),
       ...(tmdbApiKey ? { tmdbApiKey } : {}),
       ...(tvdbApiKey ? { tvdbApiKey } : {}),
       ...(traktClientSecret ? { traktClientSecret } : {}),

@@ -20,6 +20,7 @@ import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetad
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
 import { verifySignedPlaybackPath } from './play-auth.js'
 import { hasAudioLanguage, hasNonPreferredAudioMarker, hasPreferredAudioMarker } from './streamLanguage.js'
+import { streamMetadataText } from './streamUtils.js'
 
 const app = Fastify({
   logger: { level: 'info' },
@@ -326,11 +327,6 @@ function isLikelyBadResolvedFilename(filename: string): boolean {
   if (ext === 'm2ts' || ext === 'ts') return true
   if (/^\d{4,6}\.(m2ts|ts)$/.test(lower)) return true
   return false
-}
-
-function streamMetadataText(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): string {
-  const filename = typeof stream.behaviorHints?.filename === 'string' ? stream.behaviorHints.filename : ''
-  return `${stream.name ?? ''} ${stream.title ?? ''} ${stream.description ?? ''} ${filename}`.toLowerCase()
 }
 
 function streamFilenameHint(stream: { behaviorHints?: Record<string, unknown> }): string | undefined {

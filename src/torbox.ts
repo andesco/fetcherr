@@ -1,14 +1,15 @@
 import { config } from './config.js'
-import { deleteTorBoxCleanupJob, getSetting, listTorBoxCleanupJobs, upsertTorBoxCleanupJob } from './db.js'
+import { deleteTorBoxCleanupJob, listTorBoxCleanupJobs, upsertTorBoxCleanupJob } from './db.js'
 import { NotCachedError, ProviderUnavailableError } from './rd.js'
 import type { ResolvedStream } from './rd.js'
+import { similarity } from './streamUtils.js'
 
 export { NotCachedError, ProviderUnavailableError }
 
 const BASE = 'https://api.torbox.app/v1/api'
 
 function torBoxApiKey(): string {
-  return config.torBoxApiKey || getSetting('torBoxApiKey') || ''
+  return config.torBoxApiKey || ''
 }
 
 // ── Typed shapes ──────────────────────────────────────────────────────────────
@@ -26,14 +27,6 @@ interface TbCreateResult {
   hash:       string
   auth_id?:   string
 }
-
-interface TbCachedTorrent {
-  hash: string
-  name?: string
-  size?: number
-}
-
-type TbCachedTorrentEntry = TbCachedTorrent | TbCachedTorrent[]
 
 interface TbTorrentFile {
   id:             number
@@ -115,20 +108,16 @@ async function tbFetch<T>(
 
 // ── API operations ────────────────────────────────────────────────────────────
 
-async function checkCached(hash: string): Promise<boolean> {
-  const data = await tbFetch<Record<string, TbCachedTorrentEntry>>('GET', '/torrents/checkcached', {
-    query: { hash, format: 'object' },
-  })
-  const normalizedHash = hash.toLowerCase()
-  const entry = data[normalizedHash] ?? data[hash]
-  if (!entry) return false
-  return Array.isArray(entry) ? entry.length > 0 : true
-}
-
 async function createTorrent(magnet: string): Promise<TbCreateResult> {
   return tbFetch<TbCreateResult>('POST', '/torrents/createtorrent', {
     form: { magnet, add_only_if_cached: 'true' },
   })
+}
+
+function isCreateTorrentCacheMiss(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const message = err.message.toLowerCase()
+  return message.includes('cached') && (message.includes('not') || message.includes('add_only_if_cached'))
 }
 
 async function getTorrentInfo(torrentId: number): Promise<TbTorrentInfo> {
@@ -197,18 +186,6 @@ function isLikelyPlayableFile(f: TbTorrentFile): boolean {
   return SELECTABLE_VIDEO_EXTS.has(fileExt(lower))
 }
 
-function similarity(a: string, b: string): number {
-  const shorter = a.length < b.length ? a : b
-  const longer  = a.length < b.length ? b : a
-  if (longer.length === 0) return 1
-  if (longer.includes(shorter)) return shorter.length / longer.length
-  const tokA = new Set(a.split(/\W+/).filter(Boolean))
-  const tokB = new Set(b.split(/\W+/).filter(Boolean))
-  let common = 0
-  for (const t of tokA) if (tokB.has(t)) common++
-  return common / Math.max(tokA.size, tokB.size, 1)
-}
-
 function torrentFilePath(file: TbTorrentFile): string {
   return file.absolute_path || file.name
 }
@@ -271,7 +248,6 @@ function filenameHintScore(file: TbTorrentFile, hint: string): number {
   const hintBase = normalizedFilename(hint)
   if (!fileBase || !hintBase) return 0
   if (fileBase === hintBase) return 100
-  if (normalizedFilename(filePath) === hintBase) return 100
   if (fileBase.includes(hintBase) || hintBase.includes(fileBase)) {
     return 80 * Math.min(fileBase.length, hintBase.length) / Math.max(fileBase.length, hintBase.length)
   }
@@ -354,6 +330,7 @@ const RESOLVED_CACHE_TTL_MS = 3 * 60 * 1000
 const resolvedStreamCache   = new Map<string, ResolvedCacheEntry>()
 const CLEANUP_IDLE_DELAY_MS = 15 * 60 * 1000
 const CLEANUP_RETRY_DELAY_MS = 5 * 60 * 1000
+const CLEANUP_RESCHEDULE_GRANULARITY_MS = 60 * 1000
 
 interface CleanupEntry {
   torrentId:       number
@@ -390,8 +367,9 @@ function unscheduleCleanup(downloadUrl: string): void {
 
 function scheduleDeleteTorrent(downloadUrl: string, entry: CleanupEntry, deleteAt = Date.now() + CLEANUP_IDLE_DELAY_MS): void {
   if (entry.timer) clearTimeout(entry.timer)
+  const shouldPersist = entry.deleteAt !== deleteAt
   entry.deleteAt = deleteAt
-  upsertTorBoxCleanupJob(downloadUrl, entry.torrentId, deleteAt)
+  if (shouldPersist) upsertTorBoxCleanupJob(downloadUrl, entry.torrentId, deleteAt)
   const timer = setTimeout(() => {
     if (entry.activeRequests > 0) return
     void deleteTorrent(entry.torrentId)
@@ -441,7 +419,9 @@ export function markPlaybackStarted(downloadUrl: string): () => void {
 export function touchDownloadUrl(downloadUrl: string): void {
   const entry = cleanupByDownloadUrl.get(downloadUrl)
   if (!entry || entry.activeRequests > 0) return
-  scheduleDeleteTorrent(downloadUrl, entry)
+  const deleteAt = Date.now() + CLEANUP_IDLE_DELAY_MS
+  if (deleteAt - entry.deleteAt < CLEANUP_RESCHEDULE_GRANULARITY_MS) return
+  scheduleDeleteTorrent(downloadUrl, entry, deleteAt)
 }
 
 export function rehydrateTorBoxCleanupJobs(): void {
@@ -519,12 +499,16 @@ export async function resolveStream(
     return cached
   }
 
-  if (!await checkCached(cacheHash)) {
-    throw new NotCachedError(`Torrent ${cacheHash.slice(0, 8)} is not cached on TorBox`)
-  }
-
   console.log(`torbox: adding magnet ${cacheHash.slice(0, 8)}… to TorBox`)
-  const created = await createTorrent(magnet)
+  let created: TbCreateResult
+  try {
+    created = await createTorrent(magnet)
+  } catch (err) {
+    if (isCreateTorrentCacheMiss(err)) {
+      throw new NotCachedError(`Torrent ${cacheHash.slice(0, 8)} is not cached on TorBox`)
+    }
+    throw err
+  }
   console.log(`torbox: added magnet ${cacheHash.slice(0, 8)}… as torrent ${created.torrent_id}`)
 
   try {
