@@ -156,7 +156,7 @@ function junkPenalty(s: Stream): number {
   if (/\bcam(?:rip)?\b/.test(text)) penalty += 10
   if (/\btelecine\b|\btc\b/.test(text)) penalty += 8
   if (/\bline[ ._-]*audio\b|\blineaudio\b/.test(text)) penalty += 6
-  if (/\bai[ ._-]*upscale\b|\bupscale\b/.test(text)) penalty += 4
+  if (/\bai[ ._-]*upscale(?:d)?\b|\bupscale(?:d)?\b|\btopaz\b|\brealesrgan\b|\benhance(?:d)?\b/.test(text)) penalty += 6
   return penalty
 }
 
