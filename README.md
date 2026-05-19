@@ -36,6 +36,8 @@ docker compose up -d
 
 Open `http://YOUR_SERVER:9990/ui/setup-admin`, create an admin account, then enter your API keys and provider URLs in Settings.
 
+If you're switching to TorBox and want to support continued Fetcherr development, consider signing up with this referral link: https://torbox.app/subscription?referral=517608ee-35cb-458f-be00-850a2543a4f0
+
 ## Setup
 
 1. Deploy and start the container (see Quick Start above)
