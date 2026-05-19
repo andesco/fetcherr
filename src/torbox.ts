@@ -368,10 +368,28 @@ interface CleanupEntry {
   torrentId:       number
   activeRequests: number
   deleteAt:        number
+  retryCount:      number
+  lastError?:      string
   timer?:          NodeJS.Timeout
 }
 
 const cleanupByDownloadUrl = new Map<string, CleanupEntry>()
+const CLEANUP_MAX_RETRIES = 8
+
+function cleanupRetryDelayMs(retryCount: number): number {
+  const exponent = Math.max(0, retryCount - 1)
+  return Math.min(CLEANUP_RETRY_DELAY_MS * (2 ** exponent), 6 * 60 * 60 * 1000)
+}
+
+function isDeleteAlreadyGoneError(err: unknown): boolean {
+  if (err instanceof TorBoxApiError) {
+    if (err.status === 404) return true
+    const detail = [err.code ?? '', err.detail ?? '', err.message].join(' ').toLowerCase()
+    return /\b(not found|does not exist|invalid torrent|unknown torrent)\b/.test(detail)
+  }
+  if (!(err instanceof Error)) return false
+  return /\b(not found|does not exist|invalid torrent|unknown torrent)\b/i.test(err.message)
+}
 
 function resolveCacheKey(hash: string, filePathHint?: string): string {
   return `tb:${hash}|${(filePathHint ?? '').toLowerCase()}`
@@ -406,13 +424,34 @@ function scheduleDeleteTorrent(downloadUrl: string, entry: CleanupEntry, deleteA
     if (entry.activeRequests > 0) return
     void deleteTorrent(entry.torrentId)
       .then(() => {
+        entry.retryCount = 0
+        entry.lastError = undefined
         unscheduleCleanup(downloadUrl)
         console.log(`torbox: deleted torrent ${entry.torrentId} after playback idle timeout`)
       })
       .catch((err: unknown) => {
-        console.warn(`torbox: failed to delete torrent ${entry.torrentId}: ${String(err)}`)
+        if (isDeleteAlreadyGoneError(err)) {
+          entry.retryCount = 0
+          entry.lastError = undefined
+          unscheduleCleanup(downloadUrl)
+          console.log(`torbox: cleared cleanup job for already-missing torrent ${entry.torrentId}`)
+          return
+        }
+        entry.retryCount++
+        const message = String(err)
+        const repeated = entry.lastError === message
+        entry.lastError = message
+        if (entry.retryCount > CLEANUP_MAX_RETRIES) {
+          console.warn(`torbox: giving up deleting torrent ${entry.torrentId} after ${entry.retryCount} attempts: ${message}`)
+          unscheduleCleanup(downloadUrl)
+          return
+        }
+        const retryDelayMs = cleanupRetryDelayMs(entry.retryCount)
+        if (!repeated || entry.retryCount <= 2) {
+          console.warn(`torbox: failed to delete torrent ${entry.torrentId} (attempt ${entry.retryCount}/${CLEANUP_MAX_RETRIES}): ${message}`)
+        }
         if (entry.activeRequests > 0) return
-        scheduleDeleteTorrent(downloadUrl, entry, Date.now() + CLEANUP_RETRY_DELAY_MS)
+        scheduleDeleteTorrent(downloadUrl, entry, Date.now() + retryDelayMs)
       })
   }, Math.max(0, deleteAt - Date.now()))
   timer.unref()
@@ -426,7 +465,7 @@ function trackDownloadUrl(downloadUrl: string, torrentId: number): void {
     scheduleDeleteTorrent(downloadUrl, existing)
     return
   }
-  const entry: CleanupEntry = { torrentId, activeRequests: 0, deleteAt: Date.now() + CLEANUP_IDLE_DELAY_MS }
+  const entry: CleanupEntry = { torrentId, activeRequests: 0, deleteAt: Date.now() + CLEANUP_IDLE_DELAY_MS, retryCount: 0 }
   cleanupByDownloadUrl.set(downloadUrl, entry)
   scheduleDeleteTorrent(downloadUrl, entry)
 }
@@ -444,6 +483,8 @@ export function markPlaybackStarted(downloadUrl: string): () => void {
     if (finished) return
     finished = true
     entry.activeRequests = Math.max(0, entry.activeRequests - 1)
+    entry.retryCount = 0
+    entry.lastError = undefined
     if (entry.activeRequests === 0) scheduleDeleteTorrent(downloadUrl, entry)
   }
 }
@@ -465,9 +506,11 @@ export function rehydrateTorBoxCleanupJobs(): void {
       torrentId: job.torrentId,
       activeRequests: 0,
       deleteAt: job.deleteAt,
+      retryCount: 0,
     }
     entry.torrentId = job.torrentId
     entry.deleteAt = job.deleteAt
+    entry.retryCount = entry.retryCount ?? 0
     cleanupByDownloadUrl.set(job.downloadUrl, entry)
     if (job.deleteAt <= now) {
       void deleteTorrent(job.torrentId)
@@ -475,7 +518,14 @@ export function rehydrateTorBoxCleanupJobs(): void {
           unscheduleCleanup(job.downloadUrl)
           console.log(`torbox: deleted torrent ${job.torrentId} after restart recovery`)
         })
-        .catch((err: unknown) => console.warn(`torbox: failed to delete torrent ${job.torrentId} during restart recovery: ${String(err)}`))
+        .catch((err: unknown) => {
+          if (isDeleteAlreadyGoneError(err)) {
+            unscheduleCleanup(job.downloadUrl)
+            console.log(`torbox: cleared restart recovery job for already-missing torrent ${job.torrentId}`)
+            return
+          }
+          console.warn(`torbox: failed to delete torrent ${job.torrentId} during restart recovery: ${String(err)}`)
+        })
       continue
     }
     scheduleDeleteTorrent(job.downloadUrl, entry, job.deleteAt)
