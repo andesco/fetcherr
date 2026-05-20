@@ -1824,6 +1824,24 @@ label {
   align-items: center;
 }
 
+.provider-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+}
+
+.provider-move-btn {
+  width: 38px;
+  height: 38px;
+}
+
+.provider-move-btn:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .provider-remove-btn {
   justify-self: end;
 }
@@ -2515,9 +2533,19 @@ body.auth-page::after {
     width: 100%;
   }
 
-  .btn-remove {
+  .btn-remove,
+  .provider-move-btn {
     width: 38px;
     height: 38px;
+  }
+
+  .provider-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .provider-row-actions {
+    justify-self: stretch;
+    justify-content: flex-end;
   }
 
   .detail-hero {

@@ -99,14 +99,14 @@
         <option value="fetcherr">Fetcherr — rank by quality, cache status, and language</option>
         <option value="provider">Provider order — use add-on results as-is</option>
       </select>
-      <div class="field-note">Use Provider order when your add-on (e.g. AIOStreams with SEL) has already ranked streams. Fetcherr re-ranking can conflict with add-on sorting.</div>
+      <div class="field-note">Use Provider order when an add-on has already ranked streams the way you want. Fetcherr re-ranking can conflict with upstream sorting.</div>
     </div>
   </section>
 
   <!-- Debrid -->
   <section class="section" id="debrid">
     <div class="section-title">Debrid</div>
-    <div class="field-note debrid-intro" id="debridIntroNote">Configure one or both debrid providers. When both are active, stream markers ([TB+] / [RD+]) determine which provider resolves each stream.</div>
+    <div class="field-note debrid-intro" id="debridIntroNote">Configure supported debrid providers used for playback resolution.</div>
     <div class="field-grid field">
       <div class="field">
         <label for="rdApiKey">Real-Debrid API Key <span id="rdConfigState" class="config-state" hidden></span></label>
@@ -390,6 +390,17 @@
       : 'https://addon.debridio.com/...'
   }
 
+  function providerMoveButtonHtml(dir) {
+    const isUp = dir === 'up'
+    return `
+      <button type="button" class="btn-icon provider-move-btn provider-move-${dir}" title="${isUp ? 'Move add-on up' : 'Move add-on down'}" aria-label="${isUp ? 'Move add-on up' : 'Move add-on down'}" onclick="moveProviderRow(this, ${isUp ? -1 : 1})">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          ${isUp ? '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>' : '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>'}
+        </svg>
+      </button>
+    `
+  }
+
   function collectProviderUrls() {
     return [...document.querySelectorAll('.provider-url-input')]
       .map(el => el.value.trim())
@@ -423,9 +434,22 @@
     list.innerHTML = values.map((url, idx) => `
       <div class="provider-row">
         <input class="provider-url-input" type="url" placeholder="${providerPlaceholder(idx)}" value="${url.replace(/"/g, '&quot;')}">
-        ${providerRemoveButtonHtml()}
+        <div class="provider-row-actions">
+          <button type="button" class="btn-icon provider-move-btn provider-move-up" title="Move add-on up" aria-label="Move add-on up" onclick="moveProviderRow(this, -1)">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>
+            </svg>
+          </button>
+          <button type="button" class="btn-icon provider-move-btn provider-move-down" title="Move add-on down" aria-label="Move add-on down" onclick="moveProviderRow(this, 1)">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>
+            </svg>
+          </button>
+          ${providerRemoveButtonHtml()}
+        </div>
       </div>
     `).join('')
+    syncProviderRowControls()
   }
 
   function addProviderRow(value = '') {
@@ -435,9 +459,23 @@
     const idx = list.children.length
     row.innerHTML = `
       <input class="provider-url-input" type="url" placeholder="${providerPlaceholder(idx)}" value="${value.replace(/"/g, '&quot;')}">
-      ${providerRemoveButtonHtml()}
+      <div class="provider-row-actions">
+        <button type="button" class="btn-icon provider-move-btn provider-move-up" title="Move add-on up" aria-label="Move add-on up" onclick="moveProviderRow(this, -1)">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-icon provider-move-btn provider-move-down" title="Move add-on down" aria-label="Move add-on down" onclick="moveProviderRow(this, 1)">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>
+          </svg>
+        </button>
+        ${providerRemoveButtonHtml()}
+      </div>
     `
     list.appendChild(row)
+    syncProviderRowControls()
+    row.querySelector('.provider-url-input')?.focus()
   }
 
   function promptRemoveProviderRow(btn) {
@@ -460,6 +498,37 @@
     const list = document.getElementById('streamProviderList')
     btn.closest('.provider-row')?.remove()
     if (!list.children.length) renderProviderRows([''])
+    else syncProviderRowControls()
+  }
+
+  function moveProviderRow(btn, delta) {
+    const row = btn.closest('.provider-row')
+    const list = document.getElementById('streamProviderList')
+    if (!row || !list) return
+    const rows = [...list.querySelectorAll('.provider-row')]
+    const idx = rows.indexOf(row)
+    const nextIdx = idx + delta
+    if (nextIdx < 0 || nextIdx >= rows.length) return
+
+    if (delta < 0) {
+      list.insertBefore(row, rows[nextIdx])
+    } else {
+      const nextRow = rows[nextIdx]
+      list.insertBefore(nextRow, row)
+    }
+
+    syncProviderRowControls()
+    row.querySelector('.provider-url-input')?.focus()
+  }
+
+  function syncProviderRowControls() {
+    const rows = [...document.querySelectorAll('#streamProviderList .provider-row')]
+    rows.forEach((row, idx) => {
+      const up = row.querySelector('.provider-move-up')
+      const down = row.querySelector('.provider-move-down')
+      if (up) up.disabled = idx === 0
+      if (down) down.disabled = idx === rows.length - 1
+    })
   }
 
   function closeAddonRemoveModal(event) {
