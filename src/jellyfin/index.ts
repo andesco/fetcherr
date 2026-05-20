@@ -551,12 +551,13 @@ function userDataForItem(itemId: string, ud: { played: boolean; playCount: numbe
   const playedPercentage = runtimeTicks > 0
     ? Math.max(0, Math.min(100, (ud.positionTicks / runtimeTicks) * 100))
     : undefined
+  const hasActivePlaybackState = ud.played || ud.positionTicks > 0
   return {
     PlayedPercentage:      playedPercentage,
     PlaybackPositionTicks: ud.positionTicks,
     PlayCount:             ud.playCount,
     IsFavorite:            false,
-    LastPlayedDate:        ud.lastPlayedDate || undefined,
+    LastPlayedDate:        hasActivePlaybackState ? (ud.lastPlayedDate || undefined) : undefined,
     Played:                ud.played,
     Key:                   itemId,
     ItemId:                itemId,

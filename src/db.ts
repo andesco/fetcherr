@@ -2239,10 +2239,12 @@ export function syncPlayed(itemId: string, lastPlayedDate: string, userId = DEFA
 
 export function markUnplayed(itemId: string, userId = DEFAULT_ADMIN_USER_ID): void {
   getDb().prepare(`
-    INSERT INTO user_item_data (user_id, item_id, played, position_ticks)
-    VALUES (?, ?, 0, 0)
+    INSERT INTO user_item_data (user_id, item_id, played, play_count, position_ticks, last_played_date)
+    VALUES (?, ?, 0, 0, 0, '')
     ON CONFLICT(user_id, item_id) DO UPDATE SET
-      played         = 0,
-      position_ticks = 0
+      played           = 0,
+      play_count       = 0,
+      position_ticks   = 0,
+      last_played_date = ''
   `).run(userId, itemId)
 }
