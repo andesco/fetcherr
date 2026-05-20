@@ -583,7 +583,7 @@ export async function fetchRankedStremioStreams(
   externalId: string,
   expectedYear?: number,
 ): Promise<Stream[]> {
-  const streams = await fetchStreamsFromProviders(`/stream/${mediaType}/${externalId}.json`)
+  const streams = await fetchStreamsFromProviders(`/stream/${mediaType}/${encodeURIComponent(externalId)}.json`)
   if (!streams.length) throw new Error(`No streams found for ${mediaType} ${externalId}`)
   const ranked = rankStreams(streams, { expectedYear })
   if (!ranked.length) throw new Error(`No ranked streams found for ${mediaType} ${externalId}`)

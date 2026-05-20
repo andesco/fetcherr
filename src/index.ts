@@ -892,7 +892,9 @@ app.get('/play/stremio/:mediaType/:externalId', async (req, reply) => {
   const { mediaType, externalId } = req.params as { mediaType: StremioMediaType; externalId: string }
   if (mediaType !== 'movie' && mediaType !== 'series') return reply.code(404).send({ error: 'Not found' })
   const query = req.query as { token?: string; expires?: string } | undefined
-  const decodedExternalId = decodeURIComponent(externalId)
+  let decodedExternalId: string
+  try { decodedExternalId = decodeURIComponent(externalId) }
+  catch { return reply.code(400).send({ error: 'Invalid external ID encoding' }) }
   const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(decodedExternalId)}`
   if (!isPlaybackRequestAuthorized(playPath, query, req.headers)) {
     if (!requestPlaybackUser(req.headers)) {
