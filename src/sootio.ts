@@ -37,6 +37,7 @@ interface StreamRankContext {
   preferredLanguage?: string
   mediaLanguage?: string
   playbackClient?: string
+  mediaType?: 'movie' | 'episode'
 }
 
 interface RankedStreamScore {
@@ -150,13 +151,27 @@ function explicitYearScore(s: Stream, ctx: StreamRankContext): number {
   return 0
 }
 
-function junkPenalty(s: Stream): number {
+function junkPenalty(s: Stream, ctx: StreamRankContext = {}): number {
   const text = streamMetadataText(s)
   let penalty = 0
   if (/\bcam(?:rip)?\b/.test(text)) penalty += 10
   if (/\btelecine\b|\btc\b/.test(text)) penalty += 8
   if (/\bline[ ._-]*audio\b|\blineaudio\b/.test(text)) penalty += 6
-  if (/\bai[ ._-]*upscale(?:d)?\b|\bupscale(?:d)?\b|\btopaz\b|\brealesrgan\b|\benhance(?:d)?\b/.test(text)) penalty += 6
+
+  const hasAiUpscaleMarkers = /\bai[ ._-]*upscale(?:d)?\b|\bupscale(?:d)?\b|\btopaz\b|\brealesrgan\b|\benhance(?:d)?\b/.test(text)
+  if (hasAiUpscaleMarkers) {
+    penalty += 6
+    if (/\bs\d{2}e\d{2}\b/.test(text)) penalty += 6
+  }
+
+  if (ctx.mediaType === 'movie') {
+    const size = sizeBytes(s)
+    const gb = size / 1e9
+    const is1080p = resolutionScore(s) === 3
+    if (/\byify\b|\byts\b/.test(text)) penalty += 3
+    if (is1080p && gb > 0 && gb < 2) penalty += 2
+  }
+
   return penalty
 }
 
@@ -187,7 +202,7 @@ function precomputeScore(s: Stream, ctx: StreamRankContext = {}): RankedStreamSc
     languagePenalty: languagePenalty(s, preferredLanguage),
     unprobeableAudioPenalty: unprobeableAudioPenalty(s, preferredLanguage),
     regionalPenalty: regionalAudioPenalty(s, preferredLanguage),
-    junkPenalty: junkPenalty(s),
+    junkPenalty: junkPenalty(s, ctx),
     yearScore: explicitYearScore(s, ctx),
     years: explicitYearsInStream(s),
     episodeSpecificity: episodeSpecificityScore(s),
@@ -557,7 +572,7 @@ export async function fetchRankedStreams(
   if (notWebReadyDirectStreams) {
     console.log(`streams: ignored ${notWebReadyDirectStreams} notWebReady direct stream${notWebReadyDirectStreams === 1 ? '' : 's'} for ${imdbId}`)
   }
-  const ctx = { preferredLanguage, mediaLanguage, playbackClient }
+  const ctx = { preferredLanguage, mediaLanguage, playbackClient, mediaType: 'movie' as const }
   const summaries = preserveProviderOrder
     ? playableStreamsInProviderOrder(streams, ctx).map(stream => precomputeScore(stream, ctx))
     : rankStreamScores(streams, ctx)
@@ -591,7 +606,7 @@ export async function fetchRankedEpisodeStreams(
   if (notWebReadyDirectStreams) {
     console.log(`streams: ignored ${notWebReadyDirectStreams} notWebReady direct stream${notWebReadyDirectStreams === 1 ? '' : 's'} for ${imdbId} S${season}E${episode}`)
   }
-  const ctx = { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient }
+  const ctx = { expectedYear, alternateYear, preferredLanguage, mediaLanguage, playbackClient, mediaType: 'episode' as const }
   const summaries = preserveProviderOrder
     ? playableStreamsInProviderOrder(streams, ctx).map(stream => precomputeScore(stream, ctx))
     : rankStreamScores(streams, ctx)
