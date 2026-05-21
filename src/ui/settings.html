@@ -900,7 +900,7 @@
       document.getElementById('traktCallout').style.display = 'none'
       setPill('traktStatus', 'Connected', 'ok')
       document.getElementById('traktMeta').textContent = d.nextRefreshAt
-        ? `Next automatic refresh: ${new Date(d.nextRefreshAt).toLocaleDateString()}`
+        ? `Next automatic token refresh: ${new Date(d.nextRefreshAt).toLocaleDateString()}`
         : 'Authenticated'
     } else if (!traktAuthPending) {
       setPill('traktStatus', 'Not connected', '')

@@ -102,7 +102,7 @@
     if (d.authenticated) {
       setPill('traktStatus', 'Connected', 'ok')
       const refresh = d.nextRefreshAt ? new Date(d.nextRefreshAt).toLocaleDateString() : ''
-      document.getElementById('traktMeta').textContent = refresh ? `Next automatic refresh: ${refresh}` : 'Connected'
+      document.getElementById('traktMeta').textContent = refresh ? `Next automatic token refresh: ${refresh}` : 'Connected'
     } else {
       setPill('traktStatus', 'Not connected', 'err')
       document.getElementById('traktMeta').textContent = 'No valid Trakt token. Use Connect Trakt to authorize.'
