@@ -101,8 +101,8 @@
     const d = await res.json()
     if (d.authenticated) {
       setPill('traktStatus', 'Connected', 'ok')
-      const exp = d.expiresAt ? new Date(d.expiresAt).toLocaleDateString() : ''
-      document.getElementById('traktMeta').textContent = exp ? `Token valid until ${exp}` : 'Connected'
+      const refresh = d.nextRefreshAt ? new Date(d.nextRefreshAt).toLocaleDateString() : ''
+      document.getElementById('traktMeta').textContent = refresh ? `Next automatic refresh: ${refresh}` : 'Connected'
     } else {
       setPill('traktStatus', 'Not connected', 'err')
       document.getElementById('traktMeta').textContent = 'No valid Trakt token. Use Connect Trakt to authorize.'

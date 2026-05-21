@@ -899,8 +899,8 @@
       }
       document.getElementById('traktCallout').style.display = 'none'
       setPill('traktStatus', 'Connected', 'ok')
-      document.getElementById('traktMeta').textContent = d.expiresAt
-        ? `Token expires ${new Date(d.expiresAt).toLocaleDateString()}`
+      document.getElementById('traktMeta').textContent = d.nextRefreshAt
+        ? `Next automatic refresh: ${new Date(d.nextRefreshAt).toLocaleDateString()}`
         : 'Authenticated'
     } else if (!traktAuthPending) {
       setPill('traktStatus', 'Not connected', '')

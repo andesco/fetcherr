@@ -179,12 +179,14 @@ export async function getValidToken(): Promise<string | null> {
   return token.accessToken
 }
 
-export function tokenStatus(): { authenticated: boolean; expiresAt?: string } {
+export function tokenStatus(): { authenticated: boolean; expiresAt?: string; nextRefreshAt?: string } {
   const token = loadToken()
   if (!token) return { authenticated: false }
+  const nextRefreshAt = new Date(token.expiresAt.getTime() - 24 * 60 * 60 * 1000)
   return {
     authenticated: token.expiresAt > new Date(),
     expiresAt:     token.expiresAt.toISOString(),
+    nextRefreshAt: nextRefreshAt.toISOString(),
   }
 }
 
