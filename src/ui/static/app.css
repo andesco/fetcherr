@@ -2540,12 +2540,15 @@ body.auth-page::after {
   }
 
   .provider-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 
   .provider-row-actions {
-    justify-self: stretch;
+    flex: 0 0 auto;
+    justify-self: end;
     justify-content: flex-end;
+    gap: 4px;
   }
 
   .detail-hero {
@@ -2658,6 +2661,10 @@ body.auth-page::after {
     width: 100%;
   }
 
+  .user-table-scroll {
+    overflow-x: hidden;
+  }
+
   .user-table {
     min-width: 0;
   }
@@ -2667,14 +2674,18 @@ body.auth-page::after {
   }
 
   .user-table,
-  .user-table tbody,
-  .user-table tr,
-  .user-table td {
+  .user-table tbody {
     display: block;
     width: 100%;
   }
 
   .user-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(104px, .45fr);
+    grid-template-areas:
+      "identity role"
+      "password action";
+    gap: 10px;
     padding: 12px;
     border-bottom: 1px solid var(--border);
   }
@@ -2684,24 +2695,42 @@ body.auth-page::after {
   }
 
   .user-table tbody td {
-    display: grid;
-    grid-template-columns: 94px minmax(0, 1fr);
-    gap: 10px;
-    align-items: center;
-    padding: 8px 0;
+    display: block;
+    min-width: 0;
+    width: auto;
+    padding: 0;
     border-bottom: 0;
   }
 
+  .user-table tbody td:nth-child(1) { grid-area: identity; }
+  .user-table tbody td:nth-child(2) { grid-area: role; }
+  .user-table tbody td:nth-child(3) { grid-area: password; }
+  .user-table tbody td:nth-child(4) { grid-area: action; }
+
   .user-table tbody td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 750;
-    text-transform: uppercase;
+    display: none;
+  }
+
+  .user-id-cell {
+    display: none;
+  }
+
+  .user-table select {
+    width: 100%;
   }
 
   .user-actions {
-    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .user-actions .btn {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .password-state {
+    white-space: normal;
   }
 
   .toolbar {
