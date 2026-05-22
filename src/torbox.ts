@@ -1,5 +1,5 @@
 import { config } from './config.js'
-import { deleteTorBoxCleanupJob, listTorBoxCleanupJobs, upsertTorBoxCleanupJob } from './db.js'
+import { deleteTorBoxCleanupJob, getSetting, listTorBoxCleanupJobs, upsertTorBoxCleanupJob } from './db.js'
 import { NotCachedError, ProviderUnavailableError } from './rd.js'
 import type { ResolvedStream } from './rd.js'
 import { similarity } from './streamUtils.js'
@@ -10,6 +10,10 @@ const BASE = 'https://api.torbox.app/v1/api'
 
 function torBoxApiKey(): string {
   return config.torBoxApiKey || ''
+}
+
+function torBoxCleanupEnabled(): boolean {
+  return getSetting('torBoxCleanupMode') !== 'keep'
 }
 
 // ── Typed shapes ──────────────────────────────────────────────────────────────
@@ -416,12 +420,21 @@ function unscheduleCleanup(downloadUrl: string): void {
 }
 
 function scheduleDeleteTorrent(downloadUrl: string, entry: CleanupEntry, deleteAt = Date.now() + CLEANUP_IDLE_DELAY_MS): void {
+  if (!torBoxCleanupEnabled()) {
+    if (entry.timer) clearTimeout(entry.timer)
+    unscheduleCleanup(downloadUrl)
+    return
+  }
   if (entry.timer) clearTimeout(entry.timer)
   const shouldPersist = entry.deleteAt !== deleteAt
   entry.deleteAt = deleteAt
   if (shouldPersist) upsertTorBoxCleanupJob(downloadUrl, entry.torrentId, deleteAt)
   const timer = setTimeout(() => {
     if (entry.activeRequests > 0) return
+    if (!torBoxCleanupEnabled()) {
+      unscheduleCleanup(downloadUrl)
+      return
+    }
     void deleteTorrent(entry.torrentId)
       .then(() => {
         entry.retryCount = 0
@@ -459,6 +472,7 @@ function scheduleDeleteTorrent(downloadUrl: string, entry: CleanupEntry, deleteA
 }
 
 function trackDownloadUrl(downloadUrl: string, torrentId: number): void {
+  if (!torBoxCleanupEnabled()) return
   const existing = cleanupByDownloadUrl.get(downloadUrl)
   if (existing) {
     existing.torrentId = torrentId
@@ -499,6 +513,10 @@ export function touchDownloadUrl(downloadUrl: string): void {
 
 export function rehydrateTorBoxCleanupJobs(): void {
   if (!torBoxApiKey()) return
+  if (!torBoxCleanupEnabled()) {
+    for (const job of listTorBoxCleanupJobs()) deleteTorBoxCleanupJob(job.downloadUrl)
+    return
+  }
   const now = Date.now()
   for (const job of listTorBoxCleanupJobs()) {
     const existing = cleanupByDownloadUrl.get(job.downloadUrl)

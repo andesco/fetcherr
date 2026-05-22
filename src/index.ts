@@ -99,7 +99,7 @@ getDb()
       s.streamProviderUrls ?? '',
     )
   } else if (config.torBoxApiKey) {
-    config.streamProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? '')
+    config.streamProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? s.streamProviderUrls ?? '')
   } else {
     config.streamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
   }

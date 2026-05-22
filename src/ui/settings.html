@@ -127,6 +127,13 @@
         <div class="field-note">TorBox resolves cached torrent streams for playback.</div>
       </div>
     </div>
+    <label class="check-item field" for="torBoxCleanupEnabled">
+      <input id="torBoxCleanupEnabled" type="checkbox" checked>
+      <div class="check-meta">
+        <div class="check-title">Clean up TorBox library after playback</div>
+        <div class="check-slug">When enabled, Fetcherr deletes TorBox torrents after playback has been idle. Disable this if you manually keep season packs or language-specific releases in TorBox.</div>
+      </div>
+    </label>
   </section>
 
   <!-- TMDB -->
@@ -707,6 +714,7 @@
     document.getElementById('traktWatchlistShows').checked = d.traktWatchlistShows !== false
     document.getElementById('traktWatchHistory').checked = d.traktWatchHistory === true
     document.getElementById('traktCollections').checked = d.traktCollections === true
+    document.getElementById('torBoxCleanupEnabled').checked = d.torBoxCleanupEnabled !== false
     setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
     document.getElementById('mdblistLists').value = d.mdblistLists || ''
     selectedTraktLists = Array.isArray(d.traktLists) ? d.traktLists : []
@@ -1084,6 +1092,7 @@
       traktWatchlistShows: document.getElementById('traktWatchlistShows').checked,
       traktWatchHistory: document.getElementById('traktWatchHistory').checked,
       traktCollections: document.getElementById('traktCollections').checked,
+      torBoxCleanupEnabled: document.getElementById('torBoxCleanupEnabled').checked,
       traktLists:        selectedTraktLists,
       mdblistLists: document.getElementById('mdblistLists').value,
       ...(rdApiKey ? { rdApiKey } : {}),

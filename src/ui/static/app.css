@@ -2379,6 +2379,102 @@ body.auth-page::after {
     flex: 0 0 auto;
   }
 
+  .settings-page .provider-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .settings-page .provider-url-input {
+    min-width: 0;
+  }
+
+  .settings-page .provider-row-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 34px);
+    flex: 0 0 auto;
+    gap: 4px;
+    justify-self: end;
+  }
+
+  .settings-page .provider-move-btn,
+  .settings-page .provider-remove-btn {
+    width: 34px;
+    min-width: 34px;
+    height: 38px;
+  }
+
+  .settings-page .user-table-scroll {
+    overflow-x: hidden;
+  }
+
+  .settings-page .user-table {
+    min-width: 0;
+  }
+
+  .settings-page .user-table thead {
+    display: none;
+  }
+
+  .settings-page .user-table,
+  .settings-page .user-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .settings-page .user-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(104px, .45fr);
+    grid-template-areas:
+      "identity role"
+      "password action";
+    gap: 10px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-page .user-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .settings-page .user-table tbody td {
+    display: block;
+    min-width: 0;
+    width: auto;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .settings-page .user-table tbody td:nth-child(1) { grid-area: identity; }
+  .settings-page .user-table tbody td:nth-child(2) { grid-area: role; }
+  .settings-page .user-table tbody td:nth-child(3) { grid-area: password; }
+  .settings-page .user-table tbody td:nth-child(4) { grid-area: action; }
+
+  .settings-page .user-table tbody td::before {
+    display: none;
+  }
+
+  .settings-page .user-id-cell {
+    display: none;
+  }
+
+  .settings-page .user-table select {
+    width: 100%;
+  }
+
+  .settings-page .user-actions {
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .settings-page .user-actions .btn {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .settings-page .password-state {
+    white-space: normal;
+  }
+
   .field-grid {
     grid-template-columns: 1fr;
   }

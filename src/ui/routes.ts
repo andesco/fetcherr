@@ -725,6 +725,7 @@ export async function uiRoutes(app: FastifyInstance) {
       hasSootioUrl:      !!getSetting('sootioUrl'),
       hasRdApiKey:       !!getSetting('rdApiKey'),
       hasTorBoxApiKey:   !!getSetting('torBoxApiKey'),
+      torBoxCleanupEnabled: getSetting('torBoxCleanupMode') !== 'keep',
       hasTmdbApiKey:     !!getSetting('tmdbApiKey'),
       hasTvdbApiKey:     !!getSetting('tvdbApiKey'),
       hasTraktClientSecret: !!getSetting('traktClientSecret'),
@@ -817,6 +818,10 @@ export async function uiRoutes(app: FastifyInstance) {
       setSetting('streamProviderUrls', parseStreamProviderUrls(body.streamProviderUrls).join('\n'))
       setSetting('rdStreamProviderUrls', '')
       setSetting('torBoxStreamProviderUrls', '')
+    }
+    if (body.torBoxCleanupEnabled != null) {
+      const enabled = parseBooleanSetting(String(body.torBoxCleanupEnabled), true)
+      setSetting('torBoxCleanupMode', enabled ? 'delete' : 'keep')
     }
     config.streamProviderUrls = collectStreamProviderUrls(
       getSetting('rdStreamProviderUrls') ?? '',
