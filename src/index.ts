@@ -99,9 +99,17 @@ getDb()
       s.streamProviderUrls ?? '',
     )
   } else if (config.torBoxApiKey) {
-    config.streamProviderUrls = parseStreamProviderUrls(s.torBoxStreamProviderUrls ?? s.streamProviderUrls ?? '')
+    config.streamProviderUrls = collectStreamProviderUrls(
+      s.torBoxStreamProviderUrls ?? '',
+      s.streamProviderUrls ?? '',
+      config.streamProviderUrls.join('\n'),
+    )
   } else {
-    config.streamProviderUrls = parseStreamProviderUrls(s.rdStreamProviderUrls ?? s.streamProviderUrls ?? config.streamProviderUrls.join('\n'))
+    config.streamProviderUrls = collectStreamProviderUrls(
+      s.rdStreamProviderUrls ?? '',
+      s.streamProviderUrls ?? '',
+      config.streamProviderUrls.join('\n'),
+    )
   }
 }
 
