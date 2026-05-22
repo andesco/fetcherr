@@ -2359,34 +2359,6 @@ body.auth-page::after {
   font-size: 13px;
 }
 
-.topbar-nav-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, .018);
-  color: var(--muted-strong);
-  font-size: 13px;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background .15s, border-color .15s, color .15s;
-  min-height: 38px;
-}
-
-.topbar-nav-link:hover {
-  color: var(--text);
-  border-color: var(--accent-border);
-  background: var(--accent-dim);
-}
-
-.topbar-nav-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .bottom-nav {
   display: none;
 }
@@ -2898,10 +2870,6 @@ body.auth-page::after {
 }
 
 @media (max-width: 760px) {
-  .topbar-nav-label {
-    display: none;
-  }
-
   .bottom-nav {
     position: fixed;
     bottom: 0;
