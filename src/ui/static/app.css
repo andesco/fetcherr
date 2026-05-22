@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap');
+
 :root {
   --bg: #0f1115;
   --bg-raised: #141821;
@@ -49,7 +51,7 @@ html {
 body {
   min-height: 100dvh;
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--text);
   background:
     linear-gradient(180deg, rgba(143, 184, 255, .055), rgba(15, 17, 21, 0) 260px),
@@ -82,7 +84,7 @@ a {
 
 code {
   color: var(--muted-strong);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: .94em;
 }
 
@@ -2113,7 +2115,7 @@ label {
   border: 1px solid transparent;
   border-radius: var(--radius);
   background: rgba(20, 24, 33, .56);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   transition: background .12s, border-color .12s;
 }
@@ -2196,7 +2198,7 @@ label {
 .provider-metric-path {
   margin-top: 3px;
   color: var(--muted);
-  font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font: 12px 'DM Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2240,7 +2242,7 @@ label {
   max-width: 60%;
   overflow: hidden;
   color: var(--muted-strong);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   font-weight: 650;
   text-align: right;
@@ -2358,6 +2360,39 @@ body.auth-page::after {
   color: #ffd2cf;
   font-size: 13px;
 }
+
+.topbar-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, .018);
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background .15s, border-color .15s, color .15s;
+  min-height: 38px;
+}
+
+.topbar-nav-link:hover {
+  color: var(--text);
+  border-color: var(--accent-border);
+  background: var(--accent-dim);
+}
+
+.topbar-nav-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bottom-nav {
+  display: none;
+}
+
 
 @media (max-width: 900px) {
   .settings-layout {
@@ -2861,6 +2896,53 @@ body.auth-page::after {
 
   .card {
     padding: 28px 22px;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar-nav-label {
+    display: none;
+  }
+
+  .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 90;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    min-height: 56px;
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--border-strong);
+    background: rgba(12, 16, 22, .97);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .bottom-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 8px 4px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-decoration: none;
+    text-transform: uppercase;
+    transition: color .15s;
+  }
+
+  .bottom-nav-item.active {
+    color: var(--accent);
+  }
+
+  .bottom-nav-item svg {
+    width: 20px;
+    height: 20px;
   }
 }
 
