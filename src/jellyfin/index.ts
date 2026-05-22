@@ -2038,6 +2038,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const { itemId } = (req as never as { params: { itemId: string } }).params
     const user = requireRequestUser(req.headers, reply as never)
     if (!user) return
+    app.log.info(`watched: marking played ${itemId} for user ${user.id}`)
     markPlayed(itemId, user.id)
     const ud = getUserData(itemId, user.id)
     return { PlayCount: ud.playCount, Played: ud.played, LastPlayedDate: ud.lastPlayedDate || undefined }
@@ -2046,6 +2047,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const { itemId } = (req as never as { params: { itemId: string } }).params
     const user = requireRequestUser(req.headers, reply as never)
     if (!user) return
+    app.log.info(`watched: marking unplayed ${itemId} for user ${user.id}`)
     markUnplayed(itemId, user.id)
     return {}
   })
