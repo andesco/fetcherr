@@ -85,6 +85,7 @@ getDb()
   if (s.traktCollections != null) config.traktCollections = parseBooleanSetting(s.traktCollections, false)
   if (s.mdblistApiKey)        config.mdblistApiKey       = s.mdblistApiKey
   if (s.mdblistLists != null) config.mdblistLists = normalizeMdblistListUrls(parseMdblistLists(s.mdblistLists))
+  if (s.mdblistFolders != null) config.mdblistFolders = parseBooleanSetting(s.mdblistFolders, false)
   if (s.showAddDefaultMode != null) config.showAddDefaultMode = parseShowAddDefaultMode(s.showAddDefaultMode)
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
@@ -530,9 +531,12 @@ async function maybeResolveDirectPlaybackCandidate(
   }
 
   const isDebridCachedStream = streamClearlyDirectDebrid(stream)
-  if (!isDebridCachedStream && streamMarkedNotWebReady(stream)) {
+  if (!isDebridCachedStream && streamMarkedNotWebReady(stream) && !config.allowNotWebReadyDirectStreams) {
     app.log.info(`play: skipping notWebReady direct stream for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
     return null
+  }
+  if (!isDebridCachedStream && streamMarkedNotWebReady(stream)) {
+    app.log.warn(`play: allowing experimental notWebReady direct stream for ${label}${directFilename ? ` → ${directFilename}` : ''}`)
   }
 
   if (!isDebridCachedStream && directFilename && shouldProbePreferredAudio(stream, directFilename)) {

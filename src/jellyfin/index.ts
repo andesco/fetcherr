@@ -15,6 +15,7 @@ import {
 } from '../tmdb.js'
 import type { Movie, Show, Season, Episode } from '../db.js'
 import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
+import { mdblistListPathFromUrl } from '../mdblist.js'
 
 // ── ID helpers ────────────────────────────────────────────────────────────────
 // Real Jellyfin uses GUIDs for all IDs. Infuse validates this client-side.
@@ -314,6 +315,68 @@ type CollectionMember = { mediaType: 'movie' | 'show'; tmdbId: number }
 type TraktCollectionItem = ReturnType<typeof buildTraktCollectionItem>
 type TraktCollectionSummary = { slug: string; members: CollectionMember[]; item: TraktCollectionItem }
 
+// ── MDBList folder helpers ─────────────────────────────────────────────────────
+
+function mdblistFolderIdFromPath(path: string): string {
+  const digest = createHash('md5').update(`mdblist:list:${path}`).digest('hex').slice(0, 12)
+  return `00000000-0000-4000-8009-${digest}`
+}
+
+function idToMdblistListUrl(id: string): string | null {
+  if (!id.match(/^00000000-0000-4000-8009-[0-9a-f]{12}$/i)) return null
+  return config.mdblistLists.find(url => mdblistFolderIdFromPath(mdblistListPathFromUrl(url)) === id) ?? null
+}
+
+function humanizeMdblistPath(path: string): string {
+  const name = path.split('/').pop() ?? path
+  return name.split(/[-_]+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+}
+
+function mdblistFolderSourceKey(listUrl: string): string {
+  return `mdblist:list:${mdblistListPathFromUrl(listUrl)}`
+}
+
+function mdblistFolderMembers(user: AppUser, listUrl: string): CollectionMember[] {
+  return listSourceItems(mdblistFolderSourceKey(listUrl)).filter(item => {
+    if (isLibraryItemHidden(item.mediaType, item.tmdbId)) return false
+    if (item.mediaType === 'movie') {
+      const movie = getMovieByTmdbId(item.tmdbId)
+      return !!movie && canUserAccessMovie(user, movie)
+    }
+    const show = getShowByTmdbId(item.tmdbId)
+    return !!show && canUserAccessShow(user, show)
+  })
+}
+
+async function mdblistFolderContents(listUrl: string, user: AppUser) {
+  const members = mdblistFolderMembers(user, listUrl)
+  const items = []
+  for (const member of members) {
+    if (member.mediaType === 'movie') {
+      const movie = getMovieByTmdbId(member.tmdbId)
+      if (movie && canUserAccessMovie(user, movie)) items.push(movieToItem(movie, user.id))
+      continue
+    }
+    const show = getShowByTmdbId(member.tmdbId) ?? await fetchShowByTmdbId(member.tmdbId)
+    if (show && canUserAccessShow(user, show)) items.push(showToSeriesItem(show, user.id))
+  }
+  return items.sort((a, b) => String(a.SortName ?? a.Name ?? '').localeCompare(String(b.SortName ?? b.Name ?? '')))
+}
+
+function buildMdblistFolderItem(listUrl: string, count: number) {
+  const path = mdblistListPathFromUrl(listUrl)
+  const id = mdblistFolderIdFromPath(path)
+  const name = humanizeMdblistPath(path)
+  return {
+    Id: id, ServerId: SERVER_GUID, Name: name, SortName: name.toLowerCase(),
+    Type: 'CollectionFolder', CollectionType: 'mixed', IsFolder: true,
+    CanDelete: false, CanDownload: false, PlayAccess: 'Full',
+    ChildCount: count, RecursiveItemCount: count,
+    ImageTags: { Primary: 'mdblist', Backdrop: 'mdblist' },
+    UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: id },
+  }
+}
+
 function traktCollectionSourceKey(slug: string): string {
   return `trakt:list:${slug}`
 }
@@ -456,6 +519,22 @@ async function sendTraktCollectionImage(
 ): Promise<FastifyReply> {
   const user = requestUser(headers) ?? fallbackUser()
   const members = user ? collectionMembersForUser(user, slug) : listSourceItems(traktCollectionSourceKey(slug))
+  const representative = bestCollectionArtwork(members)
+  if (representative) return sendImageUrl(reply, headers, representative.path, representative.kind, query)
+  return reply.code(404).send()
+}
+
+async function sendMdblistFolderImage(
+  listUrl: string,
+  type: string,
+  query: ImageQuery | undefined,
+  headers: Record<string, string | string[] | undefined>,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const user = requestUser(headers) ?? fallbackUser()
+  const members = user
+    ? mdblistFolderMembers(user, listUrl)
+    : listSourceItems(mdblistFolderSourceKey(listUrl))
   const representative = bestCollectionArtwork(members)
   if (representative) return sendImageUrl(reply, headers, representative.path, representative.kind, query)
   return reply.code(404).send()
@@ -1275,6 +1354,10 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     ...(config.traktCollections
       ? [{ Name: 'Collections', CollectionType: 'boxsets', ItemId: COLLECTIONS_FOLDER_ID, Locations: ['/collections'] }]
       : []),
+    ...(config.mdblistFolders ? config.mdblistLists.map(url => {
+      const p = mdblistListPathFromUrl(url)
+      return { Name: humanizeMdblistPath(p), CollectionType: 'mixed', ItemId: mdblistFolderIdFromPath(p), Locations: [`/mdblist/${p}`] }
+    }) : []),
   ]))
   app.get('/Library/SelectableMediaFolders', async () => null)
 
@@ -1283,11 +1366,19 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
+    ...(config.mdblistFolders ? config.mdblistLists.map(url => {
+      const p = mdblistListPathFromUrl(url)
+      return { Name: humanizeMdblistPath(p), Id: mdblistFolderIdFromPath(p), Type: 'mixed' }
+    }) : []),
   ]))
   app.get('/UserViews/GroupingOptions', async () => ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
+    ...(config.mdblistFolders ? config.mdblistLists.map(url => {
+      const p = mdblistListPathFromUrl(url)
+      return { Name: humanizeMdblistPath(p), Id: mdblistFolderIdFromPath(p), Type: 'mixed' }
+    }) : []),
   ]))
 
   // Views — library sections
@@ -1320,6 +1411,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: SHOWS_FOLDER_ID },
       },
       ...(config.traktCollections ? [traktCollectionsFolderToItem(user)] : []),
+      ...(config.mdblistFolders ? config.mdblistLists.map(url => buildMdblistFolderItem(url, mdblistFolderMembers(user, url).length)) : []),
     ]
     return {
       Items: items,
@@ -1430,6 +1522,12 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return { Items: episodes.map(e => episodeToItem(e, show, user.id)), TotalRecordCount: episodes.length, StartIndex: offset }
     }
 
+    const mdblistUrl = ParentId && config.mdblistFolders ? idToMdblistListUrl(ParentId) : null
+    if (mdblistUrl) {
+      const items = await mdblistFolderContents(mdblistUrl, user)
+      return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
+    }
+
     const collectionSlug = ParentId ? idToTraktCollectionSlug(ParentId) : null
     if (collectionSlug && config.traktCollections) {
       const items = await traktCollectionContents(collectionSlug, user)
@@ -1484,6 +1582,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
           UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: SHOWS_FOLDER_ID },
         },
         ...(config.traktCollections ? [traktCollectionsFolderToItem(user)] : []),
+        ...(config.mdblistFolders ? config.mdblistLists.map(url => buildMdblistFolderItem(url, mdblistFolderMembers(user, url).length)) : []),
       ]
       return {
         Items: folders,
@@ -1852,6 +1951,11 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const collectionSlug = idToTraktCollectionSlug(id)
     if (collectionSlug && config.traktCollections) {
       return sendTraktCollectionImage(collectionSlug, type, query, headers, reply)
+    }
+
+    const mdblistImageUrl = config.mdblistFolders ? idToMdblistListUrl(id) : null
+    if (mdblistImageUrl) {
+      return sendMdblistFolderImage(mdblistImageUrl, type, query, headers, reply)
     }
 
     // Episode primary/backdrop still → fall back to season poster → series poster

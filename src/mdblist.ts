@@ -86,14 +86,14 @@ export function normalizeMdblistListUrls(values: string[]): string[] {
   return normalized
 }
 
-function listPathFromUrl(listUrl: string): string {
+export function mdblistListPathFromUrl(listUrl: string): string {
   const normalized = normalizeMdblistListUrl(listUrl)
   const parsed = new URL(normalized)
   return parsed.pathname.slice('/lists/'.length).replace(/\/+$/, '')
 }
 
 function mdblistListSource(listUrl: string): string {
-  return `${MDBLIST_SOURCE_PREFIX}${listPathFromUrl(listUrl)}`
+  return `${MDBLIST_SOURCE_PREFIX}${mdblistListPathFromUrl(listUrl)}`
 }
 
 export function cleanupRemovedMdblistListSources(activeListUrls: string[]): {
@@ -187,7 +187,7 @@ interface MdblistApiItem {
 }
 
 async function fetchApiListEntries(listUrl: string, apiKey: string, maxEntries: number): Promise<MdblistFetchResult> {
-  const path = listPathFromUrl(listUrl)
+  const path = mdblistListPathFromUrl(listUrl)
   const entries: MdblistEntry[] = []
   const seen = new Set<string>()
   const limit = 100

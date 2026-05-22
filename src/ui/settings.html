@@ -276,6 +276,15 @@
   <section class="section" id="mdblist">
     <div class="section-title">MDBList</div>
     <div class="field-note trakt-list-note">Paste public MDBList URLs to mirror them during the normal library sync.</div>
+    <div class="checklist">
+      <label class="check-item">
+        <input id="mdblistFolders" type="checkbox">
+        <div class="check-meta">
+          <div class="check-title">Show MDBList Lists as Library Folders</div>
+          <div class="check-slug">Each synced MDBList appears as a separate folder in Infuse and VidHub alongside Movies and Shows.</div>
+        </div>
+      </label>
+    </div>
     <div class="btn-row trakt-list-actions">
       <a class="btn btn-sm" href="https://mdblist.com/toplists/" target="_blank" rel="noreferrer">Browse Top Lists</a>
     </div>
@@ -716,6 +725,7 @@
     document.getElementById('traktCollections').checked = d.traktCollections === true
     document.getElementById('torBoxCleanupEnabled').checked = d.torBoxCleanupEnabled !== false
     setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
+    document.getElementById('mdblistFolders').checked = d.mdblistFolders === true
     document.getElementById('mdblistLists').value = d.mdblistLists || ''
     selectedTraktLists = Array.isArray(d.traktLists) ? d.traktLists : []
     managedUsers = Array.isArray(d.users) ? d.users.map(user => ({ ...user, pendingPassword: '' })) : []
@@ -1094,6 +1104,7 @@
       traktCollections: document.getElementById('traktCollections').checked,
       torBoxCleanupEnabled: document.getElementById('torBoxCleanupEnabled').checked,
       traktLists:        selectedTraktLists,
+      mdblistFolders: document.getElementById('mdblistFolders').checked,
       mdblistLists: document.getElementById('mdblistLists').value,
       ...(rdApiKey ? { rdApiKey } : {}),
       ...(torBoxApiKey ? { torBoxApiKey } : {}),
