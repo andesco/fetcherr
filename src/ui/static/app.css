@@ -2870,6 +2870,10 @@ body.auth-page::after {
 }
 
 @media (max-width: 760px) {
+  .topbar-nav-icon {
+    display: none;
+  }
+
   .bottom-nav {
     position: fixed;
     bottom: 0;
