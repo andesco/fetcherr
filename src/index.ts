@@ -29,6 +29,20 @@ const app = Fastify({
   rewriteUrl: (req) => req.url!.replace(/\/\/+/g, '/').replace(/\.view(\?|$)/, '$1'),
 })
 
+app.removeContentTypeParser('application/json')
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+  const text = String(body ?? '').trim()
+  if (!text) {
+    done(null, {})
+    return
+  }
+  try {
+    done(null, JSON.parse(text))
+  } catch (err) {
+    done(err as Error)
+  }
+})
+
 app.addHook('onRequest', async (_req, reply) => {
   reply.header('X-Content-Type-Options', 'nosniff')
   reply.header('X-Frame-Options', 'DENY')

@@ -2034,23 +2034,29 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
     return {}
   })
-  app.post('/Users/:userId/PlayedItems/:itemId', async (req, reply) => {
-    const { itemId } = (req as never as { params: { itemId: string } }).params
-    const user = requireRequestUser(req.headers, reply as never)
+  async function handleMarkPlayed(req: { params: { itemId: string }; headers: Record<string, string | string[] | undefined> }, reply: FastifyReply) {
+    const { itemId } = req.params
+    const user = requireRequestUser(req.headers, reply)
     if (!user) return
-    app.log.info(`watched: marking played ${itemId} for user ${user.id}`)
+    app.log.info('watched: marking played ' + itemId + ' for user ' + user.id)
     markPlayed(itemId, user.id)
     const ud = getUserData(itemId, user.id)
     return { PlayCount: ud.playCount, Played: ud.played, LastPlayedDate: ud.lastPlayedDate || undefined }
-  })
-  app.delete('/Users/:userId/PlayedItems/:itemId', async (req, reply) => {
-    const { itemId } = (req as never as { params: { itemId: string } }).params
-    const user = requireRequestUser(req.headers, reply as never)
+  }
+
+  async function handleMarkUnplayed(req: { params: { itemId: string }; headers: Record<string, string | string[] | undefined> }, reply: FastifyReply) {
+    const { itemId } = req.params
+    const user = requireRequestUser(req.headers, reply)
     if (!user) return
-    app.log.info(`watched: marking unplayed ${itemId} for user ${user.id}`)
+    app.log.info('watched: marking unplayed ' + itemId + ' for user ' + user.id)
     markUnplayed(itemId, user.id)
     return {}
-  })
+  }
+
+  app.post('/Users/:userId/PlayedItems/:itemId', async (req, reply) => handleMarkPlayed(req as never, reply as never))
+  app.delete('/Users/:userId/PlayedItems/:itemId', async (req, reply) => handleMarkUnplayed(req as never, reply as never))
+  app.post('/UserPlayedItems/:itemId', async (req, reply) => handleMarkPlayed(req as never, reply as never))
+  app.delete('/UserPlayedItems/:itemId', async (req, reply) => handleMarkUnplayed(req as never, reply as never))
 
   // Playback — handles both movies and episodes
   async function handlePlaybackInfo(
