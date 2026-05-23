@@ -8,8 +8,18 @@
   <link rel="stylesheet" href="/ui/static/app.css">
 </head>
 <body class="auth-page setup-admin-page">
+<div class="bg-layer"></div>
+<div class="bg-grid"></div>
+<div class="bg-blob-tl"></div>
+<div class="bg-blob-br"></div>
+<div class="bg-orb"></div>
+
   <form class="card" onsubmit="createAdmin(event)">
-    <div class="logo"><img src="/ui/static/fetcherr.svg" alt="Fetcherr"></div>
+    <div class="logo-wrap">
+      <div class="logo-circle">
+        <img src="/ui/static/fetcherr.svg" alt="Fetcherr">
+      </div>
+    </div>
     <div class="auth-version" title="__APP_VERSION_TITLE__">__APP_VERSION_LABEL__</div>
     <h1>Create Admin Account</h1>
     <p class="sub">Finish first-time setup by creating the initial admin account. All other server settings can be configured after sign-in.</p>
