@@ -64,7 +64,7 @@
       <div class="provider-actions">
         <button type="button" class="btn btn-sm" onclick="addProviderRow()">+ Add Add-on</button>
       </div>
-      <div class="field-note">Paste one Stremio add-on manifest or base URL per row. Add-ons are used only to find playable streams for items already in your Fetcherr library.</div>
+      <div class="field-note">One Stremio add-on manifest or base URL per row.</div>
     </div>
     <div class="field">
       <label for="preferredAudioLanguage">Preferred Audio Language</label>
@@ -82,7 +82,7 @@
         <option value="hi">Hindi</option>
         <option value="ar">Arabic</option>
       </select>
-      <div class="field-note">Fetcherr uses this language for stream ranking and ffprobe checks when the provider metadata is ambiguous.</div>
+      <div class="field-note">Used for stream ranking and ffprobe checks when provider metadata is ambiguous.</div>
     </div>
     <div class="field">
       <label for="englishStreamMode">Audio Match Mode</label>
@@ -91,7 +91,7 @@
         <option value="require">Require selected language audio</option>
         <option value="off">Do not rank by language markers</option>
       </select>
-      <div class="field-note">Prefer uses provider metadata as a quality tie-breaker. Require verifies neutral probeable files with ffprobe before playback.</div>
+      <div class="field-note">Prefer ranks by provider metadata. Require runs ffprobe before playback.</div>
     </div>
     <div class="field">
       <label for="streamRankingMode">Stream Ranking</label>
@@ -99,14 +99,13 @@
         <option value="fetcherr">Fetcherr — rank by quality, cache status, and language</option>
         <option value="provider">Provider order — use add-on results as-is</option>
       </select>
-      <div class="field-note">Use Provider order when an add-on has already ranked streams the way you want. Fetcherr re-ranking can conflict with upstream sorting.</div>
+      <div class="field-note">Use Provider order when your add-on already ranks streams correctly.</div>
     </div>
   </section>
 
   <!-- Debrid -->
   <section class="section" id="debrid">
     <div class="section-title">Debrid</div>
-    <div class="field-note debrid-intro" id="debridIntroNote">Configure supported debrid providers used for playback resolution.</div>
     <div class="field-grid field">
       <div class="field">
         <label for="rdApiKey">Real-Debrid API Key <span id="rdConfigState" class="config-state" hidden></span></label>
@@ -115,7 +114,6 @@
           <button id="rdValidateBtn" class="btn btn-sm" onclick="validateRD()" hidden>Validate</button>
           <button id="rdClearBtn" class="btn btn-sm btn-danger" onclick="toggleClearApiKey('rd')" hidden>Clear</button>
         </div>
-        <div class="field-note">Real-Debrid resolves cached torrent streams for playback.</div>
       </div>
       <div class="field">
         <label for="torBoxApiKey">TorBox API Key <span id="tbConfigState" class="config-state" hidden></span></label>
@@ -124,14 +122,13 @@
           <button id="tbValidateBtn" class="btn btn-sm" onclick="validateTorBox()" hidden>Validate</button>
           <button id="tbClearBtn" class="btn btn-sm btn-danger" onclick="toggleClearApiKey('tb')" hidden>Clear</button>
         </div>
-        <div class="field-note">TorBox resolves cached torrent streams for playback.</div>
       </div>
     </div>
     <label class="check-item field" for="torBoxCleanupEnabled">
       <input id="torBoxCleanupEnabled" type="checkbox" checked>
       <div class="check-meta">
         <div class="check-title">Clean up TorBox library after playback</div>
-        <div class="check-slug">When enabled, Fetcherr deletes TorBox torrents after playback has been idle. Disable this if you manually keep season packs or language-specific releases in TorBox.</div>
+        <div class="check-slug">Deletes TorBox torrents after playback has been idle.</div>
       </div>
     </label>
   </section>
@@ -158,13 +155,13 @@
         <input id="tvdbApiKey" type="password" placeholder="Enter your TVDB API key" oninput="onApiKeyInput('tvdb')">
         <button id="tvdbValidateBtn" class="btn btn-sm" onclick="validateTVDB()" hidden>Validate</button>
       </div>
-      <div class="field-note">Optional fallback for missing TV episode thumbnails when TMDB has no still image.</div>
+      <div class="field-note">Fallback for missing TV episode thumbnails.</div>
     </div>
   </section>
 
   <section class="section" id="users">
     <div class="section-title">Users</div>
-    <div class="field-note">Admins can manage accounts and roles. Admin and user accounts are unrestricted. Kids accounts are limited to kid-safe ratings automatically. User edits save together when you click Save Settings.</div>
+    <div class="field-note">Admin and user accounts are unrestricted. Kids are limited to kid-safe ratings.</div>
     <div class="user-table-wrap">
       <div class="user-table-scroll">
         <div id="userList"></div>
@@ -181,7 +178,7 @@
     <div class="field">
       <label for="serverUrl">Server URL</label>
       <input id="serverUrl" type="url" placeholder="http://your-server:9990">
-      <div class="field-note">The external URL clients should use for playback redirects.</div>
+      <div class="field-note">External URL used for playback redirects to clients.</div>
     </div>
   </section>
 
@@ -194,7 +191,7 @@
           <option value="all">Entire Series</option>
           <option value="latest">Latest Season</option>
         </select>
-        <div class="field-note">Applies to new manual adds and Trakt-imported shows that do not already have a series-mode override.</div>
+        <div class="field-note">Default for new shows without a series-mode override.</div>
       </div>
       <div>
         <label for="movieReleaseMode">Movie Release Window</label>
@@ -202,7 +199,7 @@
           <option value="digital">Digital Release</option>
           <option value="theatrical">Theatrical Release</option>
         </select>
-        <div class="field-note">Controls when movies become visible to clients by default. Per-movie overrides can still add titles earlier.</div>
+        <div class="field-note">Default visibility window. Overridable per title.</div>
       </div>
     </div>
   </section>
@@ -236,40 +233,32 @@
         <input id="traktWatchlistMovies" type="checkbox">
         <div class="check-meta">
           <div class="check-title">Sync Movie Watchlist</div>
-          <div class="check-slug">Imports your Trakt movie watchlist into Fetcherr.</div>
         </div>
       </label>
       <label class="check-item">
         <input id="traktWatchlistShows" type="checkbox">
         <div class="check-meta">
           <div class="check-title">Sync Show Watchlist</div>
-          <div class="check-slug">Imports your Trakt show watchlist into Fetcherr.</div>
         </div>
       </label>
       <label class="check-item">
         <input id="traktWatchHistory" type="checkbox">
         <div class="check-meta">
           <div class="check-title">Sync Watch History</div>
-          <div class="check-slug">Marks watched movies and episodes for the admin account based on the connected Trakt profile.</div>
+          <div class="check-slug">Marks watched state for the admin account.</div>
         </div>
       </label>
-      <label class="check-item">
-        <input id="traktCollections" type="checkbox">
-        <div class="check-meta">
-          <div class="check-title">Show Trakt Lists as Collections</div>
-          <div class="check-slug">Exposes synced Trakt lists as supplemental collections in Jellyfin-compatible clients like Infuse and VidHub.</div>
-        </div>
-      </label>
-      <label class="check-item">
-        <input id="traktFolders" type="checkbox">
-        <div class="check-meta">
-          <div class="check-title">Show Trakt Lists as Library Folders</div>
-          <div class="check-slug">Each synced Trakt list appears as a separate library folder alongside Movies and Shows in Infuse and VidHub.</div>
-        </div>
-      </label>
+      <div class="field">
+        <label for="traktListDisplay">Show Trakt Lists As</label>
+        <select id="traktListDisplay">
+          <option value="off">Off</option>
+          <option value="collections">Collections</option>
+          <option value="folders">Library Folders</option>
+        </select>
+      </div>
     </div>
-    <div class="field-note trakt-list-note">Choose which Trakt lists to sync in addition to any enabled watchlists.</div>
-    <div class="field-note trakt-list-note compact">Trakt Smart Lists are not shown here yet because Trakt's public lists API does not currently expose them.</div>
+    <div class="field-note trakt-list-note">Trakt lists to sync in addition to watchlists.</div>
+    <div class="field-note trakt-list-note compact">Smart Lists are not shown — Trakt's API doesn't expose them.</div>
     <div class="btn-row trakt-list-actions">
       <button type="button" class="btn btn-sm" onclick="selectAllTraktLists()">Select All</button>
       <button type="button" class="btn btn-sm" onclick="clearAllTraktLists()">Clear All</button>
@@ -282,13 +271,13 @@
   <!-- MDBList -->
   <section class="section" id="mdblist">
     <div class="section-title">MDBList</div>
-    <div class="field-note trakt-list-note">Paste public MDBList URLs to mirror them during the normal library sync.</div>
+    <div class="field-note trakt-list-note">Public MDBList URLs synced with your library.</div>
     <div class="checklist">
       <label class="check-item">
         <input id="mdblistFolders" type="checkbox">
         <div class="check-meta">
           <div class="check-title">Show MDBList Lists as Library Folders</div>
-          <div class="check-slug">Each synced MDBList appears as a separate folder in Infuse and VidHub alongside Movies and Shows.</div>
+          <div class="check-slug">Each list appears as a library folder alongside Movies and Shows.</div>
         </div>
       </label>
     </div>
@@ -729,8 +718,7 @@
     document.getElementById('traktWatchlistMovies').checked = d.traktWatchlistMovies !== false
     document.getElementById('traktWatchlistShows').checked = d.traktWatchlistShows !== false
     document.getElementById('traktWatchHistory').checked = d.traktWatchHistory === true
-    document.getElementById('traktCollections').checked = d.traktCollections === true
-    document.getElementById('traktFolders').checked = d.traktFolders === true
+    document.getElementById('traktListDisplay').value = d.traktFolders ? 'folders' : d.traktCollections ? 'collections' : 'off'
     document.getElementById('torBoxCleanupEnabled').checked = d.torBoxCleanupEnabled !== false
     setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
     document.getElementById('mdblistFolders').checked = d.mdblistFolders === true
@@ -1040,7 +1028,7 @@
         traktWatchlistMovies: document.getElementById('traktWatchlistMovies').checked,
         traktWatchlistShows: document.getElementById('traktWatchlistShows').checked,
         traktWatchHistory: document.getElementById('traktWatchHistory').checked,
-        traktCollections: document.getElementById('traktCollections').checked,
+        traktCollections: document.getElementById('traktListDisplay').value === 'collections',
         ...(traktClientSecret ? { traktClientSecret } : {}),
       }),
     })
@@ -1109,8 +1097,8 @@
       traktWatchlistMovies: document.getElementById('traktWatchlistMovies').checked,
       traktWatchlistShows: document.getElementById('traktWatchlistShows').checked,
       traktWatchHistory: document.getElementById('traktWatchHistory').checked,
-      traktCollections: document.getElementById('traktCollections').checked,
-      traktFolders: document.getElementById('traktFolders').checked,
+      traktCollections: document.getElementById('traktListDisplay').value === 'collections',
+      traktFolders: document.getElementById('traktListDisplay').value === 'folders',
       torBoxCleanupEnabled: document.getElementById('torBoxCleanupEnabled').checked,
       traktLists:        selectedTraktLists,
       mdblistFolders: document.getElementById('mdblistFolders').checked,
