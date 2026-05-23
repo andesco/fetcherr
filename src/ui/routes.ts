@@ -717,6 +717,7 @@ export async function uiRoutes(app: FastifyInstance) {
       traktWatchlistShows: config.traktWatchlistShows,
       traktWatchHistory: config.traktWatchHistory,
       traktCollections: config.traktCollections,
+      traktFolders: config.traktFolders,
       mdblistFolders: config.mdblistFolders,
       mdblistLists: config.mdblistLists.join('\n'),
       hasMdblistApiKey: !!getSetting('mdblistApiKey'),
@@ -863,6 +864,11 @@ export async function uiRoutes(app: FastifyInstance) {
       const enabled = parseBooleanSetting(String(body.traktCollections), false)
       setSetting('traktCollections', enabled ? 'true' : 'false')
       config.traktCollections = enabled
+    }
+    if (body.traktFolders != null) {
+      const enabled = parseBooleanSetting(String(body.traktFolders), false)
+      setSetting('traktFolders', enabled ? 'true' : 'false')
+      config.traktFolders = enabled
     }
     if (body.mdblistFolders != null) {
       const enabled = parseBooleanSetting(String(body.mdblistFolders), false)

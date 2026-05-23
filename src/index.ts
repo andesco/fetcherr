@@ -83,6 +83,7 @@ getDb()
   if (s.traktWatchlistShows != null)  config.traktWatchlistShows  = parseBooleanSetting(s.traktWatchlistShows, true)
   if (s.traktWatchHistory != null) config.traktWatchHistory = parseBooleanSetting(s.traktWatchHistory, false)
   if (s.traktCollections != null) config.traktCollections = parseBooleanSetting(s.traktCollections, false)
+  if (s.traktFolders != null) config.traktFolders = parseBooleanSetting(s.traktFolders, false)
   if (s.mdblistApiKey)        config.mdblistApiKey       = s.mdblistApiKey
   if (s.mdblistLists != null) config.mdblistLists = normalizeMdblistListUrls(parseMdblistLists(s.mdblistLists))
   if (s.mdblistFolders != null) config.mdblistFolders = parseBooleanSetting(s.mdblistFolders, false)

@@ -260,6 +260,13 @@
           <div class="check-slug">Exposes synced Trakt lists as supplemental collections in Jellyfin-compatible clients like Infuse and VidHub.</div>
         </div>
       </label>
+      <label class="check-item">
+        <input id="traktFolders" type="checkbox">
+        <div class="check-meta">
+          <div class="check-title">Show Trakt Lists as Library Folders</div>
+          <div class="check-slug">Each synced Trakt list appears as a separate library folder alongside Movies and Shows in Infuse and VidHub.</div>
+        </div>
+      </label>
     </div>
     <div class="field-note trakt-list-note">Choose which Trakt lists to sync in addition to any enabled watchlists.</div>
     <div class="field-note trakt-list-note compact">Trakt Smart Lists are not shown here yet because Trakt's public lists API does not currently expose them.</div>
@@ -723,6 +730,7 @@
     document.getElementById('traktWatchlistShows').checked = d.traktWatchlistShows !== false
     document.getElementById('traktWatchHistory').checked = d.traktWatchHistory === true
     document.getElementById('traktCollections').checked = d.traktCollections === true
+    document.getElementById('traktFolders').checked = d.traktFolders === true
     document.getElementById('torBoxCleanupEnabled').checked = d.torBoxCleanupEnabled !== false
     setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
     document.getElementById('mdblistFolders').checked = d.mdblistFolders === true
@@ -1102,6 +1110,7 @@
       traktWatchlistShows: document.getElementById('traktWatchlistShows').checked,
       traktWatchHistory: document.getElementById('traktWatchHistory').checked,
       traktCollections: document.getElementById('traktCollections').checked,
+      traktFolders: document.getElementById('traktFolders').checked,
       torBoxCleanupEnabled: document.getElementById('torBoxCleanupEnabled').checked,
       traktLists:        selectedTraktLists,
       mdblistFolders: document.getElementById('mdblistFolders').checked,
@@ -1207,7 +1216,9 @@
   function _watchForChanges() {
     const layout = document.querySelector('.settings-layout')
     layout.addEventListener('change', _markDirty)
-    layout.addEventListener('input', _markDirty)
+    layout.addEventListener('input', (e) => {
+      if (e.target.type !== 'password') _markDirty()
+    })
   }
 
   renderProviderRows([''])

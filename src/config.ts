@@ -128,6 +128,7 @@ export const config = {
   traktWatchlistShows:  parseBooleanSetting(process.env.TRAKT_WATCHLIST_SHOWS, true),
   traktWatchHistory: parseBooleanSetting(process.env.TRAKT_WATCH_HISTORY, false),
   traktCollections: parseBooleanSetting(process.env.TRAKT_COLLECTIONS, false),
+  traktFolders: parseBooleanSetting(process.env.TRAKT_FOLDERS, false),
   mdblistApiKey: process.env.MDBLIST_API_KEY ?? '',
   mdblistLists: parseMdblistLists(process.env.MDBLIST_LISTS ?? ''),
   mdblistFolders: parseBooleanSetting(process.env.MDBLIST_FOLDERS, false),
