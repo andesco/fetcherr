@@ -303,9 +303,9 @@
   </section>
 
   <!-- Save bar -->
-  <div class="save-bar">
-    <p>Save to apply changes immediately. No restart needed.</p>
-    <button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">Save Settings</button>
+  <div class="save-bar" onclick="saveSettings()">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+    <button class="btn btn-primary" id="saveBtn">Save</button>
   </div>
 
   <div id="out" class="callout settings-output" style="display:none"></div>
@@ -1168,13 +1168,15 @@
     }
 
     await loadSettings()
+    _markClean()
     const btn = document.getElementById('saveBtn')
     btn.classList.add('saved')
     btn.innerHTML = `<svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> Saved`
     setTimeout(() => {
       btn.classList.remove('saved')
-      btn.innerHTML = 'Save Settings'
-    }, 2500)
+      btn.innerHTML = 'Save'
+      _markClean()
+    }, 2000)
   }
 
   function updateSettingsNav() {
@@ -1191,8 +1193,29 @@
     })
   }
 
+  let _settingsLoaded = false
+
+  function _markDirty() {
+    if (!_settingsLoaded) return
+    document.querySelector('.save-bar').classList.add('has-changes')
+  }
+
+  function _markClean() {
+    document.querySelector('.save-bar').classList.remove('has-changes')
+  }
+
+  function _watchForChanges() {
+    const layout = document.querySelector('.settings-layout')
+    layout.addEventListener('change', _markDirty)
+    layout.addEventListener('input', _markDirty)
+  }
+
   renderProviderRows([''])
-  loadSettings()
+  loadSettings().then(() => {
+    _settingsLoaded = true
+    _markClean()
+    _watchForChanges()
+  })
   loadTraktStatus()
   loadTraktLists()
   updateSettingsNav()
