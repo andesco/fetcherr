@@ -1787,6 +1787,11 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return traktCollectionToItem(collectionSlug, currentUser)
     }
 
+    const mdblistUrl = config.mdblistFolders ? idToMdblistListUrl(id) : null
+    if (mdblistUrl) {
+      return buildMdblistFolderItem(mdblistUrl, mdblistFolderMembers(currentUser, mdblistUrl).length)
+    }
+
     // Episode
     const epRef = idToEpisode(id)
     if (epRef) {
