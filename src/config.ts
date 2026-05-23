@@ -24,11 +24,33 @@ export function parseTraktLists(value: string): string[] {
   return value.split(',').map(s => s.trim()).filter(Boolean)
 }
 
-export function parseMdblistLists(value: string): string[] {
-  return value
+export interface MdblistListEntry {
+  url: string
+  name?: string
+}
+
+export function parseMdblistLists(value: string): MdblistListEntry[] {
+  if (!value.trim()) return []
+  const trimmed = value.trim()
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) {
+        return (parsed as unknown[])
+          .filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null && typeof (e as Record<string, unknown>).url === 'string')
+          .map(e => ({
+            url: String(e.url).trim(),
+            ...(e.name && String(e.name).trim() ? { name: String(e.name).trim() } : {}),
+          }))
+          .filter(e => e.url)
+      }
+    } catch { /* fall through to legacy */ }
+  }
+  return trimmed
     .split(/[\r\n,]+/)
     .map(s => s.trim())
     .filter(Boolean)
+    .map(url => ({ url }))
 }
 
 export function parseBooleanSetting(value: string | undefined, fallback = false): boolean {

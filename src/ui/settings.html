@@ -297,9 +297,12 @@
       <div class="field-note">Required for lists with more than 48 items. Get your free key at <a href="https://mdblist.com/preferences/" target="_blank" rel="noreferrer">mdblist.com/preferences</a>.</div>
     </div>
     <div class="field">
-      <label for="mdblistLists">List URLs</label>
-      <textarea id="mdblistLists" placeholder="https://mdblist.com/lists/user/list-name"></textarea>
-      <div class="field-note">Add one URL per line. Use individual list URLs, not the Top Lists directory.</div>
+      <label>Lists</label>
+      <div id="mdblistRows" class="mdblist-list"></div>
+      <div class="mdblist-add-row">
+        <input id="mdblistAddInput" type="url" placeholder="https://mdblist.com/lists/user/list-name" onkeydown="onMdblistAddKey(event)">
+        <button type="button" class="btn btn-sm" onclick="addMdblistEntry()">Add</button>
+      </div>
     </div>
   </section>
 
@@ -352,6 +355,36 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="mdblistEditModalBackdrop" onclick="closeMdblistEditModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <div class="modal-head-row">
+        <h2 class="modal-title">Edit List</h2>
+        <button type="button" class="icon-btn" onclick="closeMdblistEditModal()" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="mdblistEditUrl">URL</label>
+        <input id="mdblistEditUrl" type="url" placeholder="https://mdblist.com/lists/user/list-name">
+      </div>
+      <div class="field">
+        <label for="mdblistEditName">Name <span class="optional-tag">Optional</span></label>
+        <input id="mdblistEditName" type="text" placeholder="Custom display name">
+        <div class="field-note">Overrides the MDBList name in Infuse and VidHub.</div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" onclick="closeMdblistEditModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" onclick="saveMdblistEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="addonRemoveModalBackdrop" onclick="closeAddonRemoveModal(event)">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="modal-head">
@@ -375,6 +408,8 @@
 
 <script>
   let selectedTraktLists = []
+  let mdblistEntries = []
+  let mdblistEditIdx = -1
   let traktAuthPending = false
   let traktAuthPollId = null
   let traktAuthTimeoutId = null
@@ -678,6 +713,113 @@
     setApiStoredStatus(service)
   }
 
+  function _esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  }
+
+  function mdblistDisplayName(entry) {
+    if (entry.name) return entry.name
+    try {
+      const url = new URL(entry.url)
+      const segment = url.pathname.replace(/\/+$/, '').split('/').pop() || ''
+      return segment.split(/[-_]+/).filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ') || entry.url
+    } catch { return entry.url }
+  }
+
+  function renderMdblistRows() {
+    const container = document.getElementById('mdblistRows')
+    if (!mdblistEntries.length) {
+      container.innerHTML = '<div class="mdblist-empty">No lists added yet.</div>'
+      return
+    }
+    container.innerHTML = mdblistEntries.map((entry, idx) => `
+      <div class="mdblist-row">
+        <div class="mdblist-name">${_esc(mdblistDisplayName(entry))}</div>
+        <div class="mdblist-row-actions">
+          <button type="button" class="btn-icon" title="Edit list" aria-label="Edit list" onclick="openMdblistEditModal(${idx})">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+          <button type="button" class="btn-remove" title="Remove list" aria-label="Remove list" onclick="removeMdblistEntry(${idx})">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    `).join('')
+  }
+
+  function addMdblistEntry() {
+    const input = document.getElementById('mdblistAddInput')
+    const url = input.value.trim()
+    if (!url) return
+    if (!url.includes('mdblist.com/lists/')) {
+      showOut('Enter a valid MDBList list URL (mdblist.com/lists/…)', 'error')
+      return
+    }
+    if (mdblistEntries.some(e => e.url === url)) {
+      showOut('This list is already added.', 'error')
+      return
+    }
+    mdblistEntries = [...mdblistEntries, { url }]
+    input.value = ''
+    renderMdblistRows()
+    _markDirty()
+  }
+
+  function onMdblistAddKey(event) {
+    if (event.key === 'Enter') { event.preventDefault(); addMdblistEntry() }
+  }
+
+  function removeMdblistEntry(idx) {
+    mdblistEntries = mdblistEntries.filter((_, i) => i !== idx)
+    renderMdblistRows()
+    _markDirty()
+  }
+
+  function openMdblistEditModal(idx) {
+    mdblistEditIdx = idx
+    const entry = mdblistEntries[idx]
+    document.getElementById('mdblistEditUrl').value = entry.url
+    document.getElementById('mdblistEditName').value = entry.name || ''
+    document.getElementById('mdblistEditModalBackdrop').classList.add('open')
+    document.addEventListener('keydown', onMdblistEditModalKey)
+  }
+
+  function closeMdblistEditModal(e) {
+    if (e instanceof Event && e.target !== document.getElementById('mdblistEditModalBackdrop')) return
+    document.getElementById('mdblistEditModalBackdrop').classList.remove('open')
+    document.removeEventListener('keydown', onMdblistEditModalKey)
+    mdblistEditIdx = -1
+  }
+
+  function onMdblistEditModalKey(e) {
+    if (e.key === 'Escape') closeMdblistEditModal()
+  }
+
+  function saveMdblistEdit() {
+    const url = document.getElementById('mdblistEditUrl').value.trim()
+    const name = document.getElementById('mdblistEditName').value.trim()
+    if (!url) return
+    if (!url.includes('mdblist.com/lists/')) {
+      showOut('Enter a valid MDBList list URL (mdblist.com/lists/…)', 'error')
+      return
+    }
+    if (mdblistEditIdx >= 0 && mdblistEditIdx < mdblistEntries.length) {
+      mdblistEntries = mdblistEntries.map((e, i) => i === mdblistEditIdx ? { url, ...(name ? { name } : {}) } : e)
+      renderMdblistRows()
+      _markDirty()
+    }
+    document.getElementById('mdblistEditModalBackdrop').classList.remove('open')
+    document.removeEventListener('keydown', onMdblistEditModalKey)
+    mdblistEditIdx = -1
+  }
+
   function setMdblistStoredStatus() {
     const input = document.getElementById('mdblistApiKey')
     const badge = document.getElementById('mdblistConfigState')
@@ -729,7 +871,8 @@
     document.getElementById('torBoxCleanupEnabled').checked = d.torBoxCleanupEnabled !== false
     setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
     document.getElementById('mdblistFolders').checked = d.mdblistFolders === true
-    document.getElementById('mdblistLists').value = d.mdblistLists || ''
+    mdblistEntries = Array.isArray(d.mdblistLists) ? d.mdblistLists : []
+    renderMdblistRows()
     selectedTraktLists = Array.isArray(d.traktLists) ? d.traktLists : []
     managedUsers = Array.isArray(d.users) ? d.users.map(user => ({ ...user, pendingPassword: '' })) : []
     deletedUserIds = new Set()
@@ -1109,7 +1252,7 @@
       torBoxCleanupEnabled: document.getElementById('torBoxCleanupEnabled').checked,
       traktLists:        selectedTraktLists,
       mdblistFolders: document.getElementById('mdblistFolders').checked,
-      mdblistLists: document.getElementById('mdblistLists').value,
+      mdblistLists: mdblistEntries,
       ...(rdApiKey ? { rdApiKey } : {}),
       ...(torBoxApiKey ? { torBoxApiKey } : {}),
       ...(clearRdApiKey ? { rdApiKey: '' } : {}),

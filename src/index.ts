@@ -6,7 +6,7 @@ import { uiRoutes } from './ui/routes.js'
 import { wrapFastifyLogger } from './logger.js'
 import { markSyncComplete } from './sync-state.js'
 import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatchlist, syncTraktList, syncTraktWatchedStatus, startDeviceAuth, tokenStatus } from './trakt.js'
-import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls, syncMdblistList } from './mdblist.js'
+import { cleanupRemovedMdblistListSources, normalizeMdblistEntries, syncMdblistList } from './mdblist.js'
 import { fetchRankedStreams, fetchRankedEpisodeStreams, extractHashFromStream, summarizeStreamForLog } from './sootio.js'
 import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
 import {
@@ -85,7 +85,7 @@ getDb()
   if (s.traktCollections != null) config.traktCollections = parseBooleanSetting(s.traktCollections, false)
   if (s.traktFolders != null) config.traktFolders = parseBooleanSetting(s.traktFolders, false)
   if (s.mdblistApiKey)        config.mdblistApiKey       = s.mdblistApiKey
-  if (s.mdblistLists != null) config.mdblistLists = normalizeMdblistListUrls(parseMdblistLists(s.mdblistLists))
+  if (s.mdblistLists != null) config.mdblistLists = normalizeMdblistEntries(parseMdblistLists(s.mdblistLists))
   if (s.mdblistFolders != null) config.mdblistFolders = parseBooleanSetting(s.mdblistFolders, false)
   if (s.showAddDefaultMode != null) config.showAddDefaultMode = parseShowAddDefaultMode(s.showAddDefaultMode)
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
@@ -1149,10 +1149,10 @@ async function runSyncInternal() {
     )
   }
 
-  for (const listUrl of config.mdblistLists) {
-    await syncMdblistList(listUrl).catch(err => app.log.error(`MDBList sync "${listUrl}" failed: ${err}`))
+  for (const entry of config.mdblistLists) {
+    await syncMdblistList(entry.url).catch(err => app.log.error(`MDBList sync "${entry.url}" failed: ${err}`))
   }
-  const staleMdblistCleanup = cleanupRemovedMdblistListSources(config.mdblistLists)
+  const staleMdblistCleanup = cleanupRemovedMdblistListSources(config.mdblistLists.map(e => e.url))
   if (staleMdblistCleanup.removedSourceKeys.length) {
     app.log.warn(
       `sync: removed stale MDBList sources — ${staleMdblistCleanup.removedSourceKeys.join(', ')}; ` +

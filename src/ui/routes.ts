@@ -25,7 +25,7 @@ import { config } from '../config.js'
 import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
-import { cleanupRemovedMdblistListSources, normalizeMdblistListUrls } from '../mdblist.js'
+import { cleanupRemovedMdblistListSources, normalizeMdblistEntries } from '../mdblist.js'
 import { getProviderFetchMetrics } from '../sootio.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -719,7 +719,7 @@ export async function uiRoutes(app: FastifyInstance) {
       traktCollections: config.traktCollections,
       traktFolders: config.traktFolders,
       mdblistFolders: config.mdblistFolders,
-      mdblistLists: config.mdblistLists.join('\n'),
+      mdblistLists: config.mdblistLists,
       hasMdblistApiKey: !!getSetting('mdblistApiKey'),
       showAddDefaultMode: config.showAddDefaultMode,
       movieReleaseMode: config.movieReleaseMode,
@@ -901,19 +901,22 @@ export async function uiRoutes(app: FastifyInstance) {
     }
     if (Array.isArray(body.mdblistLists)) {
       try {
-        const lists = normalizeMdblistListUrls(body.mdblistLists.map(v => String(v)))
-        setSetting('mdblistLists', lists.join('\n'))
-        config.mdblistLists = lists
-        cleanupRemovedMdblistListSources(lists)
+        const raw = (body.mdblistLists as unknown[])
+          .filter((v): v is { url: string; name?: string } => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
+          .map(v => ({ url: v.url.trim(), ...(v.name?.trim() ? { name: v.name.trim() } : {}) }))
+        const entries = normalizeMdblistEntries(raw)
+        setSetting('mdblistLists', JSON.stringify(entries))
+        config.mdblistLists = entries
+        cleanupRemovedMdblistListSources(entries.map(e => e.url))
       } catch (err) {
         return reply.code(400).send({ error: String(err instanceof Error ? err.message : err) })
       }
     } else if (typeof body.mdblistLists === 'string') {
       try {
-        const lists = normalizeMdblistListUrls(parseMdblistLists(body.mdblistLists))
-        setSetting('mdblistLists', lists.join('\n'))
-        config.mdblistLists = lists
-        cleanupRemovedMdblistListSources(lists)
+        const entries = normalizeMdblistEntries(parseMdblistLists(body.mdblistLists))
+        setSetting('mdblistLists', JSON.stringify(entries))
+        config.mdblistLists = entries
+        cleanupRemovedMdblistListSources(entries.map(e => e.url))
       } catch (err) {
         return reply.code(400).send({ error: String(err instanceof Error ? err.message : err) })
       }

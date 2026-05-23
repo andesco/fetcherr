@@ -1,4 +1,4 @@
-import { config } from './config.js'
+import { config, type MdblistListEntry } from './config.js'
 import {
   hasAnySourceItem,
   listSourceKeys,
@@ -84,6 +84,22 @@ export function normalizeMdblistListUrls(values: string[]): string[] {
     }
   }
   return normalized
+}
+
+export function normalizeMdblistEntries(entries: MdblistListEntry[]): MdblistListEntry[] {
+  const result: MdblistListEntry[] = []
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    if (!entry.url?.trim()) continue
+    try {
+      const url = normalizeMdblistListUrl(entry.url)
+      if (!seen.has(url)) {
+        seen.add(url)
+        result.push({ url, ...(entry.name?.trim() ? { name: entry.name.trim() } : {}) })
+      }
+    } catch { /* skip invalid URLs */ }
+  }
+  return result
 }
 
 export function mdblistListPathFromUrl(listUrl: string): string {

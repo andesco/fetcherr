@@ -1216,26 +1216,30 @@
 
     if (previous != null && previous !== tmdbId) {
       const prevMenu = document.getElementById(`tvAddMenu-${previous}`)
-      if (prevMenu) prevMenu.classList.remove('open', 'drop-up')
+      if (prevMenu) { prevMenu.classList.remove('open'); prevMenu.removeAttribute('style') }
     }
 
     const currentMenu = document.getElementById(`tvAddMenu-${tmdbId}`)
     if (currentMenu) {
       const isOpen = openTvMenuTmdbId === tmdbId
-      currentMenu.classList.remove('drop-up')
       currentMenu.classList.toggle('open', isOpen)
       if (isOpen) {
         const trigger = event.currentTarget
-        const menuRect = currentMenu.getBoundingClientRect()
         const triggerRect = trigger.getBoundingClientRect()
-        const scrollContainer = currentMenu.closest('.modal-body')
-        const containerBottom = scrollContainer
-          ? Math.min(scrollContainer.getBoundingClientRect().bottom, window.innerHeight)
-          : window.innerHeight
-        const viewportPadding = 12
-        if (menuRect.bottom > containerBottom - viewportPadding && triggerRect.top > menuRect.height + viewportPadding) {
-          currentMenu.classList.add('drop-up')
+        const menuHeight = currentMenu.offsetHeight || 88
+        const spaceBelow = window.innerHeight - triggerRect.bottom - 12
+        currentMenu.style.position = 'fixed'
+        currentMenu.style.right = (window.innerWidth - triggerRect.right) + 'px'
+        currentMenu.style.left = 'auto'
+        if (spaceBelow >= menuHeight) {
+          currentMenu.style.top = (triggerRect.bottom + 8) + 'px'
+          currentMenu.style.bottom = 'auto'
+        } else {
+          currentMenu.style.top = 'auto'
+          currentMenu.style.bottom = (window.innerHeight - triggerRect.top + 8) + 'px'
         }
+      } else {
+        currentMenu.removeAttribute('style')
       }
     }
   }
@@ -1243,7 +1247,7 @@
   document.addEventListener('click', () => {
     if (openTvMenuTmdbId != null) {
       const menu = document.getElementById(`tvAddMenu-${openTvMenuTmdbId}`)
-      if (menu) menu.classList.remove('open', 'drop-up')
+      if (menu) { menu.classList.remove('open'); menu.removeAttribute('style') }
       openTvMenuTmdbId = null
     }
     closeLibraryActionMenu()

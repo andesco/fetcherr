@@ -1576,10 +1576,8 @@ label {
 }
 
 .tv-add-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 10;
+  position: fixed;
+  z-index: 200;
   display: none;
   min-width: 158px;
   padding: 6px;
@@ -1587,11 +1585,6 @@ label {
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: 0 16px 40px rgba(0,0,0,.35);
-}
-
-.tv-add-menu.drop-up {
-  top: auto;
-  bottom: calc(100% + 8px);
 }
 
 .tv-add-menu.open {
@@ -1870,6 +1863,54 @@ label {
 
 .provider-actions {
   margin-top: 10px;
+}
+
+.mdblist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.mdblist-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-inset);
+}
+
+.mdblist-name {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mdblist-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mdblist-add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mdblist-add-row input {
+  min-width: 0;
+  flex: 1;
+}
+
+.mdblist-empty {
+  padding: 8px 2px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .status-row {
