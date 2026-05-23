@@ -369,7 +369,7 @@ function buildMdblistFolderItem(listUrl: string, count: number) {
   const name = humanizeMdblistPath(path)
   return {
     Id: id, ServerId: SERVER_GUID, Name: name, SortName: name.toLowerCase(),
-    Type: 'CollectionFolder', CollectionType: 'mixed', IsFolder: true,
+    Type: 'CollectionFolder', CollectionType: 'boxsets', IsFolder: true,
     CanDelete: false, CanDownload: false, PlayAccess: 'Full',
     ChildCount: count, RecursiveItemCount: count,
     ImageTags: { Primary: 'mdblist', Backdrop: 'mdblist' },
@@ -1356,7 +1356,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       : []),
     ...(config.mdblistFolders ? config.mdblistLists.map(url => {
       const p = mdblistListPathFromUrl(url)
-      return { Name: humanizeMdblistPath(p), CollectionType: 'mixed', ItemId: mdblistFolderIdFromPath(p), Locations: [`/mdblist/${p}`] }
+      return { Name: humanizeMdblistPath(p), CollectionType: 'boxsets', ItemId: mdblistFolderIdFromPath(p), Locations: [`/mdblist/${p}`] }
     }) : []),
   ]))
   app.get('/Library/SelectableMediaFolders', async () => null)
@@ -1368,7 +1368,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
     ...(config.mdblistFolders ? config.mdblistLists.map(url => {
       const p = mdblistListPathFromUrl(url)
-      return { Name: humanizeMdblistPath(p), Id: mdblistFolderIdFromPath(p), Type: 'mixed' }
+      return { Name: humanizeMdblistPath(p), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
     }) : []),
   ]))
   app.get('/UserViews/GroupingOptions', async () => ([
@@ -1377,7 +1377,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
     ...(config.mdblistFolders ? config.mdblistLists.map(url => {
       const p = mdblistListPathFromUrl(url)
-      return { Name: humanizeMdblistPath(p), Id: mdblistFolderIdFromPath(p), Type: 'mixed' }
+      return { Name: humanizeMdblistPath(p), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
     }) : []),
   ]))
 
