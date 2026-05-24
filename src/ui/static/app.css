@@ -2970,6 +2970,22 @@ body.dashboard-page {
     padding-bottom: calc(68px + env(safe-area-inset-bottom));
   }
 
+  /* On mobile, revert dashboard to normal page scroll — stacked controls exhaust flex space */
+  body.dashboard-page {
+    height: auto;
+    overflow: visible;
+  }
+  .dashboard-page .shell {
+    display: block;
+    height: auto;
+    overflow: visible;
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+  .library-window {
+    height: auto;
+    overflow-y: visible;
+  }
+
   .card {
     padding: 28px 22px;
   }
