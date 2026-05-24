@@ -199,5 +199,24 @@
     <span>Logs</span>
   </a>
 </nav>
+<script>
+;(function(){
+  var nav=document.querySelector('.bottom-nav')
+  if(!nav)return
+  var lastY=window.scrollY,ticking=false
+  window.addEventListener('scroll',function(){
+    if(ticking)return
+    ticking=true
+    requestAnimationFrame(function(){
+      var y=window.scrollY
+      if(y<60)nav.classList.remove('nav-hidden')
+      else if(y>lastY+8)nav.classList.add('nav-hidden')
+      else if(y<lastY-5)nav.classList.remove('nav-hidden')
+      lastY=y
+      ticking=false
+    })
+  },{passive:true})
+})()
+</script>
 </body>
 </html>
