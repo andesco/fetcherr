@@ -1,6 +1,6 @@
 {
   "name": "fetcherr",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Jellyfin-compatible bridge for Infuse with Trakt library sync and Real-Debrid or TorBox stream resolution.",
   "type": "module",
   "scripts": {
