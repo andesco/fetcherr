@@ -1630,6 +1630,7 @@ async function buildSearchResultItems(
   limit: number,
   offset: number,
   user: AppUser,
+  searchOnly = false,
 ) {
   const wantMovies = !includeTypes || includeTypes.includes('movie')
   const wantShows = !includeTypes || includeTypes.includes('series')
@@ -1687,7 +1688,7 @@ async function buildSearchResultItems(
     ...stremioSearchItems,
   ]
 
-  if (!combined.length && !externalSearchEnabled) {
+  if (searchOnly && !combined.length && !externalSearchEnabled) {
     return searchDisabledResponse(includeTypes, limit, offset)
   }
 
@@ -2253,7 +2254,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const offset          = parseInt(q.startindex ?? '0')
 
     if (opts.searchOnly && SearchTerm) {
-      return buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user)
+      return buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user, true)
     }
 
     // ── Shows folder ───────────────────────────────────────────────────────────

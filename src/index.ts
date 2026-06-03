@@ -1505,13 +1505,13 @@ function playbackMediaSource(id: string, name: string, path: string, runtimeTick
   }
 }
 
-async function playbackStreamsForPath(playPath: string, playbackClient: string): Promise<{ streams: Stream[]; label: string; fileHint?: string }> {
+async function playbackStreamsForPath(playPath: string, playbackClient: string, preserveProviderOrder = true): Promise<{ streams: Stream[]; label: string; fileHint?: string }> {
   const stremioMatch = playPath.match(/^\/play\/stremio\/(movie|series)\/(.+)$/)
   if (stremioMatch) {
     const mediaType = stremioMatch[1] as StremioMediaType
     const externalId = decodeURIComponent(stremioMatch[2])
     return {
-      streams: await fetchRankedStremioStreams(mediaType, externalId, undefined, config.preferredAudioLanguage, '', playbackClient, true),
+      streams: await fetchRankedStremioStreams(mediaType, externalId, undefined, config.preferredAudioLanguage, '', playbackClient, preserveProviderOrder),
       label: `${mediaType} ${externalId}`,
     }
   }
@@ -1536,7 +1536,7 @@ async function playbackStreamsForPath(playPath: string, playbackClient: string):
         config.preferredAudioLanguage,
         '',
         playbackClient,
-        true,
+        preserveProviderOrder,
       ),
       label: `${imdbId} S${season}E${episodeNumber}`,
       fileHint: `s${pad2(season)}e${pad2(episodeNumber)}`,
@@ -1547,7 +1547,7 @@ async function playbackStreamsForPath(playPath: string, playbackClient: string):
   if (movieMatch) {
     const imdbId = movieMatch[1]
     return {
-      streams: await fetchRankedStreams(imdbId, config.preferredAudioLanguage, '', playbackClient, true),
+      streams: await fetchRankedStreams(imdbId, config.preferredAudioLanguage, '', playbackClient, preserveProviderOrder),
       label: imdbId,
     }
   }
@@ -1568,15 +1568,9 @@ async function buildPlaybackMediaSources(input: {
   const fallbackSource = playbackMediaSource(input.sourceId, input.name, fallbackUrl, input.runtimeTicks)
 
   try {
-    const { streams, label, fileHint } = await playbackStreamsForPath(input.playPath, input.playbackClient)
-    const bitrateSorted = sortPlaybackMediaSourceStreamsByBitrate(
-      streams.filter(stream => (stream.url || extractHashFromStream(stream)) && streamEligibleForMediaSourceSelection(stream)),
-      input.runtimeTicks,
-    )
-    const usable = sortPlaybackMediaSourceStreamsByBitrate(
-      selectPlaybackMediaSourceStreams(bitrateSorted, config.mediaSourceLimit),
-      input.runtimeTicks,
-    )
+    const { streams, label, fileHint } = await playbackStreamsForPath(input.playPath, input.playbackClient, false)
+    const qualityRanked = streams.filter(stream => (stream.url || extractHashFromStream(stream)) && streamEligibleForMediaSourceSelection(stream))
+    const usable = selectPlaybackMediaSourceStreams(qualityRanked, config.mediaSourceLimit)
 
     if (!usable.length) return [fallbackSource]
 
