@@ -53,7 +53,7 @@ const IMAGE_PROXY_TIMEOUT_MS = 10_000
 const IMAGE_PROXY_MAX_BYTES = 8 * 1024 * 1024
 const IMAGE_PROXY_MAX_REDIRECTS = 5
 const IMAGE_PROXY_CACHE_MAX_ITEMS = 250
-const STREMIO_SEARCH_CACHE_TTL_MS = 30 * 60 * 1000
+const STREMIO_SEARCH_CACHE_TTL_MS = 15 * 60 * 1000
 const STREMIO_SEARCH_CACHE_MAX_KEYS = 2_000
 const STREMIO_CACHE_MAX_ITEMS = 1_000
 const PLAYED_COMPLETION_THRESHOLD = 0.95
@@ -3069,6 +3069,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (itemId) {
       const canonicalItemId = normalizePlaybackItemId(itemId)
       opts.stopPlaybackItem?.(canonicalItemId)
+      idToStremioSearchMeta(canonicalItemId) // refresh TTL so 15-min cleanup window starts from stop time
       const runtimeTicks = bodyRuntimeTicks ?? runtimeTicksForItem(canonicalItemId) ?? undefined
       if (playedToCompletion || reachedCompletionThreshold(positionTicks, runtimeTicks)) {
         markPlayed(canonicalItemId, user.id)
