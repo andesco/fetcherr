@@ -42,7 +42,10 @@ import { searchTraktMetas } from '../trakt.js'
 const MOVIES_FOLDER_ID = 'a0000000-0000-4000-8000-000000000001'
 const SHOWS_FOLDER_ID  = 'a0000000-0000-4000-8000-000000000002'
 const COLLECTIONS_FOLDER_ID = 'a0000000-0000-4000-8007-000000000001'
+const SEARCH_DISABLED_ITEM_ID = 'a0000000-0000-4000-800a-000000000001'
+const SEARCH_DISABLED_RUNTIME_TICKS = 60 * 10_000_000
 const SERVER_GUID      = 'a0000000-0000-0000-0000-000000000001'
+const SEARCH_SERVER_GUID = 'a0000000-0000-0000-0000-00000000f001'
 // Keep old name as alias so existing code still compiles
 const FOLDER_ID = MOVIES_FOLDER_ID
 
@@ -71,6 +74,7 @@ const stremioSeasonCache = new Map<string, { series: StremioMeta; seasonNumber: 
 const stremioEpisodeCache = new Map<string, { series: StremioMeta; episode: StremioMeta; expiresAt: number }>()
 const stremioRatingCache = new Map<string, { rating: string; expiresAt: number }>()
 type JellyfinRouteOptions = {
+  searchOnly?: boolean
   prewarmPlayback?: (playPath: string, label: string) => void
   registerPlaybackItem?: (itemId: string, playPath: string) => void
   registerPlaybackClient?: (playPath: string, clientName: string) => void
@@ -1559,6 +1563,65 @@ async function stremioRatingForVisibleMeta(user: AppUser, meta: StremioMeta, med
   return stremioOfficialRating(meta, mediaType)
 }
 
+function externalSearchEnabledForUser(user: AppUser): boolean {
+  return config.stremioSearchEnabled && user.searchEnabled
+}
+
+function searchDisabledItem(includeTypes: string) {
+  const type = includeTypes.includes('series') && !includeTypes.includes('movie') ? 'Series' : 'Movie'
+  const isSeries = type === 'Series'
+  return {
+    Id:                 SEARCH_DISABLED_ITEM_ID,
+    ServerId:           SERVER_GUID,
+    Name:               'Fetcherr Search Disabled',
+    SortName:           'fetcherr search disabled',
+    Type:               type,
+    MediaType:          'Video',
+    VideoType:          'VideoFile',
+    LocationType:       'FileSystem',
+    PlayAccess:         'Full',
+    IsPlayable:         true,
+    CanDelete:          false,
+    CanDownload:        false,
+    Overview:           'Search must be enabled globally in Settings and for this Fetcherr user.',
+    IsFolder:           isSeries,
+    ChildCount:         isSeries ? 0 : undefined,
+    RecursiveItemCount: isSeries ? 0 : undefined,
+    RunTimeTicks:       SEARCH_DISABLED_RUNTIME_TICKS,
+    Path:               '/fetcherr/search-disabled.mkv',
+    ImageTags:          {},
+    BackdropImageTags:  [],
+    ProviderIds:        {},
+    UserData:           userDataForItem(SEARCH_DISABLED_ITEM_ID, { played: false, playCount: 0, positionTicks: 0, lastPlayedDate: '' }),
+  }
+}
+
+function searchDisabledMediaSource(origin: string) {
+  return defaultPlaybackMediaSource(
+    SEARCH_DISABLED_ITEM_ID,
+    'Fetcherr Search Disabled',
+    `${origin}/Videos/${SEARCH_DISABLED_ITEM_ID}/stream?PlaySessionId=fetcherr-${SEARCH_DISABLED_ITEM_ID}&MediaSourceId=${SEARCH_DISABLED_ITEM_ID}`,
+    SEARCH_DISABLED_RUNTIME_TICKS,
+  )
+}
+
+function searchDisabledPlaybackInfo(origin: string) {
+  const mediaSources = [searchDisabledMediaSource(origin)]
+  return {
+    MediaSources: mediaSources,
+    AlternateMediaSources: mediaSources,
+    PlaySessionId: `fetcherr-${SEARCH_DISABLED_ITEM_ID}`,
+  }
+}
+
+function searchDisabledResponse(includeTypes: string, limit: number, offset: number) {
+  return {
+    Items: offset > 0 || limit <= 0 ? [] : [searchDisabledItem(includeTypes)],
+    TotalRecordCount: 1,
+    StartIndex: offset,
+  }
+}
+
 async function buildSearchResultItems(
   searchTerm: string,
   includeTypes: string,
@@ -1575,19 +1638,20 @@ async function buildSearchResultItems(
     ...(wantShows ? ['series' as const] : []),
   ]
 
-  const rawStremioMetas = stremioTypes.length && config.stremioSearchEnabled
-    ? await (config.stremioSearchSource === 'trakt'
-        ? searchTraktMetas(searchTerm, stremioTypes).catch(() => [])
-        : searchStremioMetas(searchTerm, stremioTypes).catch(() => []))
-    : []
-  const stremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
-
   const localMovies = wantMovies
     ? filterMoviesForUser(user, listMovies({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
     : []
   const localShows = wantShows
     ? filterShowsForUser(user, listShows({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
     : []
+  const externalSearchEnabled = externalSearchEnabledForUser(user)
+
+  const rawStremioMetas = externalSearchEnabled && stremioTypes.length
+    ? await (config.stremioSearchSource === 'trakt'
+        ? searchTraktMetas(searchTerm, stremioTypes).catch(() => [])
+        : searchStremioMetas(searchTerm, stremioTypes).catch(() => []))
+    : []
+  const stremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
 
   const localMovieIds = new Set(localMovies.map(movie => movie.tmdbId))
   const localShowIds = new Set(localShows.map(show => show.tmdbId))
@@ -1622,6 +1686,10 @@ async function buildSearchResultItems(
     ...localShows.map(show => showToSeriesItem(show, user.id)),
     ...stremioSearchItems,
   ]
+
+  if (!combined.length && !externalSearchEnabled) {
+    return searchDisabledResponse(includeTypes, limit, offset)
+  }
 
   return {
     Items: pagedItems(combined, offset, limit),
@@ -1821,12 +1889,12 @@ export function resolveJellyfinUser(headers: Record<string, string | string[] | 
   return getUserById(record.userId)
 }
 
-function jellyfinUser(user: AppUser) {
+function jellyfinUser(user: AppUser, serverId = SERVER_GUID, serverName = config.serverName) {
   return {
     Name:                  user.username,
     Id:                    user.id,
-    ServerId:              SERVER_GUID,
-    ServerName:            config.serverName,
+    ServerId:              serverId,
+    ServerName:            serverName,
     PrimaryImageTag:       null,
     HasPassword:           true,
     HasConfiguredPassword: true,
@@ -1842,17 +1910,18 @@ function jellyfinUser(user: AppUser) {
   }
 }
 
-function jellyfinSessionInfo(user: AppUser, accessToken: string) {
+function jellyfinSessionInfo(user: AppUser, accessToken: string, serverId = SERVER_GUID, searchOnly = false) {
   const now = new Date().toISOString()
+  const deviceSuffix = searchOnly ? '-search' : ''
   return {
     Id:              `${user.id}:${accessToken.slice(0, 12)}`,
     UserId:          user.id,
     UserName:        user.username,
     Client:          'Fetcherr',
-    DeviceName:      'Fetcherr',
+    DeviceName:      searchOnly ? 'Fetcherr Search' : 'Fetcherr',
     DeviceType:      'Browser',
-    DeviceId:        `fetcherr-${user.id}`,
-    AppName:         'Fetcherr',
+    DeviceId:        `fetcherr-${user.id}${deviceSuffix}`,
+    AppName:         searchOnly ? 'Fetcherr Search' : 'Fetcherr',
     AppVersion:      '1.0.0',
     ApplicationVersion: '1.0.0',
     PlayableMediaTypes: ['Video'],
@@ -1863,7 +1932,7 @@ function jellyfinSessionInfo(user: AppUser, accessToken: string) {
     IsActive:        true,
     LastActivityDate: now,
     LastPlaybackCheckIn: now,
-    ServerId:        SERVER_GUID,
+    ServerId:        serverId,
     UserPrimaryImageTag: null,
     AdditionalUsers: [],
     NowPlayingQueue: [],
@@ -1937,6 +2006,30 @@ function signedPlaybackUrlForMediaSource(origin: string, playPath: string, media
 // ── Route registration ────────────────────────────────────────────────────────
 
 export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOptions = {}) {
+  const routeServerId = opts.searchOnly ? SEARCH_SERVER_GUID : SERVER_GUID
+  const routeServerName = () => opts.searchOnly ? `${config.serverName} Search` : config.serverName
+  const emptyItems = (startIndex = 0) => ({ Items: [], TotalRecordCount: 0, StartIndex: startIndex })
+
+  function routeServerPayload<T>(payload: T): T {
+    if (!opts.searchOnly || payload == null || typeof payload !== 'object') return payload
+    if (payload instanceof Uint8Array || payload instanceof ArrayBuffer) return payload
+    if (Array.isArray(payload)) return payload.map(item => routeServerPayload(item)) as T
+    const output: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+      if (key === 'ServerId' && value === SERVER_GUID) {
+        output[key] = routeServerId
+      } else if (key === 'ServerName' && value === config.serverName) {
+        output[key] = routeServerName()
+      } else {
+        output[key] = routeServerPayload(value)
+      }
+    }
+    return output as T
+  }
+
+  if (opts.searchOnly) {
+    app.addHook('preSerialization', async (_req, _reply, payload) => routeServerPayload(payload))
+  }
 
   function requireJellyfinUser(
     headers: Record<string, string | string[] | undefined>,
@@ -1960,8 +2053,8 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
 
   function systemInfo() {
     return {
-      ServerName:             config.serverName,
-      Id:                     SERVER_GUID,
+      ServerName:             routeServerName(),
+      Id:                     routeServerId,
       Version:                '10.11.0',
       ProductName:            'Jellyfin Server',
       OperatingSystem:        'Linux',
@@ -2022,29 +2115,29 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const accessToken = createJellyfinToken(user.id)
     return {
       AccessToken: accessToken,
-      ServerId:    SERVER_GUID,
-      SessionInfo: jellyfinSessionInfo(user, accessToken),
-      User:        jellyfinUser(user),
+      ServerId:    routeServerId,
+      SessionInfo: jellyfinSessionInfo(user, accessToken, routeServerId, Boolean(opts.searchOnly)),
+      User:        jellyfinUser(user, routeServerId, routeServerName()),
     }
   })
 
   // Public users — used by Jellyfin clients during login and server discovery
-  app.get('/Users/Public', async () => listUsers().map(jellyfinUser))
+  app.get('/Users/Public', async () => listUsers().map(user => jellyfinUser(user, routeServerId, routeServerName())))
 
   // User profile
   app.get('/Users/:id', async (req, reply) => {
     const user = requireJellyfinUser(req.headers, reply)
     if (!user) return
-    return jellyfinUser(user)
+    return jellyfinUser(user, routeServerId, routeServerName())
   })
   app.get('/Users/Me',  async (req, reply) => {
     const user = requireJellyfinUser(req.headers, reply)
     if (!user) return
-    return jellyfinUser(user)
+    return jellyfinUser(user, routeServerId, routeServerName())
   })
 
   // Library sections
-  app.get('/Library/VirtualFolders', async () => ([
+  app.get('/Library/VirtualFolders', async () => opts.searchOnly ? [] : ([
     { Name: 'Movies', CollectionType: 'movies', ItemId: MOVIES_FOLDER_ID, Locations: ['/movies'] },
     { Name: 'Shows',  CollectionType: 'tvshows', ItemId: SHOWS_FOLDER_ID,  Locations: ['/shows'] },
     ...(config.traktCollections
@@ -2062,7 +2155,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   app.get('/Library/SelectableMediaFolders', async () => null)
 
   // Grouping options
-  app.get('/Users/:id/GroupingOptions', async () => ([
+  app.get('/Users/:id/GroupingOptions', async () => opts.searchOnly ? [] : ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
@@ -2074,7 +2167,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return { Name: nameForMdblistUrl(entry.url), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
     }) : []),
   ]))
-  app.get('/UserViews/GroupingOptions', async () => ([
+  app.get('/UserViews/GroupingOptions', async () => opts.searchOnly ? [] : ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
@@ -2089,6 +2182,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
 
   // Views — library sections
   function viewItemsResponse(user: AppUser) {
+    if (opts.searchOnly) return emptyItems()
     const moviesCount = filterMoviesForUser(user, listMovies({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })).length
     const showsCount = filterShowsForUser(user, listShows({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })).length
     const items = [
@@ -2158,8 +2252,13 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const limit           = q.limit ? parseInt(q.limit) : 10_000
     const offset          = parseInt(q.startindex ?? '0')
 
+    if (opts.searchOnly && SearchTerm) {
+      return buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user)
+    }
+
     // ── Shows folder ───────────────────────────────────────────────────────────
     if (ParentId === SHOWS_FOLDER_ID) {
+      if (opts.searchOnly) return emptyItems(offset)
       // Infuse scans the library with three separate recursive queries:
       // includeItemTypes=Season  → flat list of all seasons across all shows
       // includeItemTypes=Episode → flat list of all aired episodes across all shows
@@ -2264,6 +2363,8 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         : []
       return { Items: episodes.map(e => episodeToItem(e, show, user.id)), TotalRecordCount: episodes.length, StartIndex: offset }
     }
+
+    if (opts.searchOnly) return emptyItems(offset)
 
     const mdblistUrl = ParentId && config.mdblistFolders ? idToMdblistListUrl(ParentId) : null
     if (mdblistUrl) {
@@ -2425,6 +2526,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     for (const [k, v] of Object.entries(rawQuery)) q[k.toLowerCase()] = v
     const limit = parseInt(q.limit ?? '16', 10)
     const offset = parseInt(q.startindex ?? '0', 10)
+    if (opts.searchOnly) return emptyItems(offset)
     const seriesTmdbId = q.seriesid ? idToShowTmdb(q.seriesid) : null
     const allNextUp = await withReadCache(`nextup:${user.id}`, async () => {
       const playedIds = getAllPlayedItemIds(user.id)
@@ -2465,6 +2567,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     for (const [k, v] of Object.entries(req.query)) q[k.toLowerCase()] = v
     const limit = q.limit ? parseInt(q.limit, 10) : 50
     const offset = q.startindex ? parseInt(q.startindex, 10) : 0
+    if (opts.searchOnly) return emptyItems(offset)
     return withReadCache(`resume:${user.id}:${offset}:${limit}`, async () => {
       const ids = listResumeItemIds(limit, offset, user.id)
       const items = []
@@ -2496,6 +2599,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     for (const [k, v] of Object.entries(rawQuery)) q[k.toLowerCase()] = v
     const lim      = parseInt(q.limit ?? '16')
     const parentId = q.parentid
+    if (opts.searchOnly) return []
 
     if (parentId === SHOWS_FOLDER_ID) {
       return filterShowsForUser(user, listShows({ sortBy: 'popularity', sortOrder: 'DESC', limit: lim, userId: user.id, ...API_LIBRARY_FILTER })).map(show => showToSeriesItem(show, user.id))
@@ -2543,6 +2647,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       runtimeTicks: number
     },
   ) {
+    if (!config.mediaSourceSelection) return item
     return addDetailMediaSources(item, headers, {
       itemId: input.itemId,
       sourceId: input.sourceId,
@@ -2563,6 +2668,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       runtimeTicks: number
     },
   ) {
+    if (!config.mediaSourceSelection) return item
     return addDetailMediaSources(item, headers, {
       itemId: input.itemId,
       sourceId: input.sourceId,
@@ -2580,6 +2686,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   ) {
     const currentUser = user === undefined ? fallbackUser() : user
     if (!currentUser) return reply.code(401).send({ error: 'Unauthorized' })
+    if (id === SEARCH_DISABLED_ITEM_ID) {
+      return searchDisabledItem('')
+    }
     // Collection folders
     if (id === MOVIES_FOLDER_ID) {
       const n = filterMoviesForUser(currentUser, listMovies({ limit: 10_000, offset: 0, userId: currentUser.id, ...API_LIBRARY_FILTER })).length
@@ -2616,6 +2725,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (stremioEpisode) {
       if (!await canUserAccessStremioMeta(currentUser, stremioEpisode.series, 'series')) return reply.code(404).send({ error: 'Not found' })
       const item = stremioEpisodeToItem(stremioEpisode.series, stremioEpisode.episode) as Record<string, unknown>
+      if (!config.mediaSourceSelection) return item
       const { series, episode } = stremioEpisode
       const externalId = episode.id || `${series.id}:${stremioEpisodeSeasonNumber(episode)}:${stremioEpisodeNumber(episode)}`
       const playPath = `/play/stremio/series/${encodeURIComponent(externalId)}`
@@ -2671,7 +2781,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       if (!ep) return reply.code(404).send({ error: 'Not found' })
       if (!isEpisodeVisibleToLibrary(ep)) return reply.code(404).send({ error: 'Not found' })
       const item = episodeToItem(ep, show, currentUser.id) as Record<string, unknown>
-      if (!show.imdbId) return item
+      if (!config.mediaSourceSelection || !show.imdbId) return item
       const playPath = `/play/${show.imdbId}/${ep.seasonNumber}/${ep.episodeNumber}`
       return addDetailMediaSources(item, headers, {
         itemId: id,
@@ -2767,6 +2877,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const user = requestUser(req.headers)
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
     const { seriesId } = req.params as { seriesId: string }
+    if (seriesId === SEARCH_DISABLED_ITEM_ID) return { Items: [], TotalRecordCount: 0, StartIndex: 0 }
     const stremioSeries = idToStremioSearchMeta(seriesId)
     if (stremioSeries?.mediaType === 'series') {
       if (!await canUserAccessStremioMeta(user, stremioSeries.meta, 'series')) {
@@ -2801,6 +2912,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const user = requestUser(req.headers)
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
     const { seriesId } = req.params as { seriesId: string }
+    if (seriesId === SEARCH_DISABLED_ITEM_ID) return { Items: [], TotalRecordCount: 0, StartIndex: 0 }
     const rawQ = (req as never as { query: Record<string, string | string[] | undefined> }).query
     const q: Record<string, string> = {}
     for (const [k, v] of Object.entries(rawQ)) q[k.toLowerCase()] = queryValue(v)
@@ -3122,6 +3234,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const user = requestUser(req.headers)
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
     const { id } = req.params
+    if (id === SEARCH_DISABLED_ITEM_ID) {
+      return searchDisabledPlaybackInfo(buildPlaybackOrigin(req.headers))
+    }
 
     const stremioEpisode = idToStremioEpisode(id)
     if (stremioEpisode) {
@@ -3320,6 +3435,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
 
     const origin = buildPlaybackOrigin(req.headers as Record<string, string | undefined>)
+    if (id === SEARCH_DISABLED_ITEM_ID) {
+      return reply.code(409).send({ error: 'Search disabled', message: 'Fetcherr Search Disabled' })
+    }
 
     const stremioEpisode = idToStremioEpisode(id)
     if (stremioEpisode) {
