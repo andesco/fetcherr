@@ -78,6 +78,12 @@ export type AudioLanguage =
 export type EnglishStreamMode = 'off' | 'prefer' | 'require'
 export type DirectPlaybackMode = 'off' | 'torrentsOnly' | 'all'
 export type StreamRankingMode = 'fetcherr' | 'provider'
+export type StremioSearchSource = 'cinemeta' | 'addon' | 'trakt'
+
+export function parseStremioSearchSource(value: string | undefined): StremioSearchSource {
+  if (value === 'addon' || value === 'trakt') return value
+  return 'cinemeta'
+}
 export type MediaSourceLimit = 5 | 10
 
 export function parseStreamRankingMode(value: string | undefined): StreamRankingMode {
@@ -172,6 +178,7 @@ export const config = {
   directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
   streamRankingMode: parseStreamRankingMode(process.env.STREAM_RANKING_MODE),
   stremioSearchEnabled: parseBooleanSetting(process.env.STREMIO_SEARCH_ENABLED, false),
+  stremioSearchSource: parseStremioSearchSource(process.env.STREMIO_SEARCH_SOURCE),
   mediaSourceSelection: parseBooleanSetting(process.env.MEDIA_SOURCE_SELECTION, false),
   mediaSourceLimit: parseMediaSourceLimit(process.env.MEDIA_SOURCE_LIMIT),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),

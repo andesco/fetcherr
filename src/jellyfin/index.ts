@@ -21,6 +21,7 @@ import type { Movie, Show, Season, Episode } from '../db.js'
 import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
 import { mdblistListPathFromUrl } from '../mdblist.js'
 import { fetchStremioMeta, searchStremioMetas, type StremioMediaType, type StremioMeta } from '../sootio.js'
+import { searchTraktMetas } from '../trakt.js'
 
 // ── ID helpers ────────────────────────────────────────────────────────────────
 // Real Jellyfin uses GUIDs for all IDs. Infuse validates this client-side.
@@ -1572,7 +1573,9 @@ async function buildSearchResultItems(
   ]
 
   const rawStremioMetas = stremioTypes.length && config.stremioSearchEnabled
-    ? await searchStremioMetas(searchTerm, stremioTypes).catch(() => [])
+    ? await (config.stremioSearchSource === 'trakt'
+        ? searchTraktMetas(searchTerm, stremioTypes).catch(() => [])
+        : searchStremioMetas(searchTerm, stremioTypes).catch(() => []))
     : []
   const stremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
 

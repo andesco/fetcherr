@@ -1,4 +1,5 @@
 import { config } from './config.js'
+import type { StremioMeta, StremioMediaType } from './sootio.js'
 import { DEFAULT_ADMIN_USER_ID, getDb, getSetting, hasAnySourceItem, listSourceKeys, pruneOrphanedMovies, pruneOrphanedShows, removeSourceKey, replaceSourceItems, setSetting, syncPlayed, upsertManualShowSubscription } from './db.js'
 import { fetchMovieByTmdbId, fetchShowByTmdbId } from './tmdb.js'
 
@@ -686,4 +687,30 @@ export async function syncTraktWatchedStatus(): Promise<{ movies: number; episod
 
   console.log(`trakt: watched-status sync complete — ${syncedMovies} movies, ${syncedEpisodes} episodes marked for admin`)
   return { movies: syncedMovies, episodes: syncedEpisodes }
+}
+
+interface TraktSearchItem {
+  type: 'movie' | 'show'
+  movie?: { title?: string; year?: number; ids?: { imdb?: string; tmdb?: number } }
+  show?: { title?: string; year?: number; ids?: { imdb?: string; tmdb?: number } }
+}
+
+export async function searchTraktMetas(query: string, types: StremioMediaType[]): Promise<StremioMeta[]> {
+  if (!config.traktClientId || !query.trim()) return []
+  const traktTypes = types.map(t => t === 'series' ? 'show' : t).join(',')
+  try {
+    const { status, data } = await traktRequest('GET', `/search/${traktTypes}?query=${encodeURIComponent(query)}&extended=full&limit=20`)
+    if (status !== 200) return []
+    return (data as TraktSearchItem[]).map(r => {
+      const item = r.movie ?? r.show
+      const mediaType: StremioMediaType = r.type === 'show' ? 'series' : 'movie'
+      const imdbId = item?.ids?.imdb
+      const tmdbId = item?.ids?.tmdb
+      const id = imdbId ?? (tmdbId ? `tmdb:${tmdbId}` : '')
+      if (!id) return null
+      return { id, type: mediaType, name: item?.title, year: item?.year, imdb_id: imdbId } as StremioMeta
+    }).filter((m): m is StremioMeta => m !== null)
+  } catch {
+    return []
+  }
 }

@@ -121,12 +121,20 @@
       <div class="field-note">Versions are ordered by estimated Mbps.</div>
     </div>
     <label class="check-item field" for="stremioSearchEnabled">
-      <input id="stremioSearchEnabled" type="checkbox">
+      <input id="stremioSearchEnabled" type="checkbox" onchange="syncStremioSearchSourceVisibility()">
       <div class="check-meta">
         <div class="check-title">Stremio search</div>
         <div class="check-slug">Include add-on results when searching from Infuse or VidHub.</div>
       </div>
     </label>
+    <div class="field" id="stremioSearchSourceField" hidden>
+      <label for="stremioSearchSource">Search source</label>
+      <select id="stremioSearchSource">
+        <option value="cinemeta">Cinemeta — Stremio public catalog, no setup needed</option>
+        <option value="trakt">Trakt — uses Trakt API (requires Trakt setup)</option>
+        <option value="addon">Add-on catalog — uses your configured stream add-ons</option>
+      </select>
+    </div>
   </section>
 
   <!-- Debrid -->
@@ -649,6 +657,11 @@
     document.getElementById('mediaSourceLimitField').hidden = !enabled
   }
 
+  function syncStremioSearchSourceVisibility() {
+    const enabled = document.getElementById('stremioSearchEnabled').checked
+    document.getElementById('stremioSearchSourceField').hidden = !enabled
+  }
+
   function setSecretPlaceholder(id, hasStored, emptyPlaceholder) {
     const input = document.getElementById(id)
     input.value = ''
@@ -888,6 +901,8 @@
     document.getElementById('streamRankingMode').value = d.streamRankingMode || 'fetcherr'
     document.getElementById('mediaSourceSelection').checked = d.mediaSourceSelection === true
     document.getElementById('stremioSearchEnabled').checked = d.stremioSearchEnabled === true
+    document.getElementById('stremioSearchSource').value = d.stremioSearchSource || 'cinemeta'
+    syncStremioSearchSourceVisibility()
     document.getElementById('mediaSourceLimit').value = String(d.mediaSourceLimit === 5 ? 5 : 10)
     syncMediaSourceLimitVisibility()
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
@@ -1331,6 +1346,7 @@
       streamRankingMode: document.getElementById('streamRankingMode').value,
       mediaSourceSelection: document.getElementById('mediaSourceSelection').checked,
       stremioSearchEnabled: document.getElementById('stremioSearchEnabled').checked,
+      stremioSearchSource: document.getElementById('stremioSearchSource').value,
       mediaSourceLimit: document.getElementById('mediaSourceLimit').value,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,

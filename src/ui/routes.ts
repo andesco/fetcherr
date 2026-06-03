@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists } from '../config.js'
+import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseStremioSearchSource, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistEntries } from '../mdblist.js'
@@ -730,6 +730,7 @@ export async function uiRoutes(app: FastifyInstance) {
       englishStreamMode: config.englishStreamMode,
       streamRankingMode: config.streamRankingMode,
       stremioSearchEnabled: config.stremioSearchEnabled,
+      stremioSearchSource: config.stremioSearchSource,
       mediaSourceSelection: config.mediaSourceSelection,
       mediaSourceLimit: config.mediaSourceLimit,
       serverUrl:         config.serverUrl,
@@ -861,6 +862,11 @@ export async function uiRoutes(app: FastifyInstance) {
       const enabled = parseBooleanSetting(String(body.stremioSearchEnabled), false)
       setSetting('stremioSearchEnabled', enabled ? 'true' : 'false')
       config.stremioSearchEnabled = enabled
+    }
+    if (typeof body.stremioSearchSource === 'string') {
+      const source = parseStremioSearchSource(body.stremioSearchSource)
+      setSetting('stremioSearchSource', source)
+      config.stremioSearchSource = source
     }
     if (body.mediaSourceSelection != null) {
       const enabled = parseBooleanSetting(String(body.mediaSourceSelection), false)

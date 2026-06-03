@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import { parseTorrentTitle, type ParsedResult as ParsedTorrentTitleResult } from '@viren070/parse-torrent-title'
 import { randomBytes } from 'node:crypto'
-import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists } from './config.js'
+import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseStremioSearchSource } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -101,6 +101,7 @@ getDb()
   if (s.englishStreamMode != null) config.englishStreamMode = parseEnglishStreamMode(s.englishStreamMode)
   if (s.streamRankingMode != null) config.streamRankingMode = parseStreamRankingMode(s.streamRankingMode)
   if (s.stremioSearchEnabled != null) config.stremioSearchEnabled = parseBooleanSetting(s.stremioSearchEnabled, false)
+  if (s.stremioSearchSource != null) config.stremioSearchSource = parseStremioSearchSource(s.stremioSearchSource)
   if (s.mediaSourceSelection != null) config.mediaSourceSelection = parseBooleanSetting(s.mediaSourceSelection, false)
   if (s.mediaSourceLimit != null) config.mediaSourceLimit = parseMediaSourceLimit(s.mediaSourceLimit)
   const bothConfigured = Boolean(config.rdApiKey && config.torBoxApiKey)

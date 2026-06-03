@@ -447,6 +447,8 @@ function rankStreamScores(streams: Stream[], ctx: StreamRankContext = {}): Ranke
   )
 }
 
+const CINEMETA_BASE = 'https://v3-cinemeta.strem.io'
+
 function providerBases(): string[] {
   const urls = [...config.streamProviderUrls]
   if (config.sootioUrl) urls.push(config.sootioUrl)
@@ -454,6 +456,9 @@ function providerBases(): string[] {
 }
 
 function searchProviderBases(): string[] {
+  if (config.stremioSearchSource === 'cinemeta' || config.stremioSearchSource === 'trakt') {
+    return [CINEMETA_BASE]
+  }
   const urls = [...config.stremioSearchProviderUrls]
   if (!urls.length) urls.push(...providerBases())
   return [...new Set(urls)]
