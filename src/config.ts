@@ -171,6 +171,7 @@ export const config = {
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),
   directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
   streamRankingMode: parseStreamRankingMode(process.env.STREAM_RANKING_MODE),
+  stremioSearchEnabled: parseBooleanSetting(process.env.STREMIO_SEARCH_ENABLED, false),
   mediaSourceSelection: parseBooleanSetting(process.env.MEDIA_SOURCE_SELECTION, false),
   mediaSourceLimit: parseMediaSourceLimit(process.env.MEDIA_SOURCE_LIMIT),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),

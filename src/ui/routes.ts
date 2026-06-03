@@ -729,6 +729,7 @@ export async function uiRoutes(app: FastifyInstance) {
       preferredAudioLanguage: config.preferredAudioLanguage,
       englishStreamMode: config.englishStreamMode,
       streamRankingMode: config.streamRankingMode,
+      stremioSearchEnabled: config.stremioSearchEnabled,
       mediaSourceSelection: config.mediaSourceSelection,
       mediaSourceLimit: config.mediaSourceLimit,
       serverUrl:         config.serverUrl,
@@ -855,6 +856,11 @@ export async function uiRoutes(app: FastifyInstance) {
       const mode = parseStreamRankingMode(body.streamRankingMode)
       setSetting('streamRankingMode', mode)
       config.streamRankingMode = mode
+    }
+    if (body.stremioSearchEnabled != null) {
+      const enabled = parseBooleanSetting(String(body.stremioSearchEnabled), false)
+      setSetting('stremioSearchEnabled', enabled ? 'true' : 'false')
+      config.stremioSearchEnabled = enabled
     }
     if (body.mediaSourceSelection != null) {
       const enabled = parseBooleanSetting(String(body.mediaSourceSelection), false)

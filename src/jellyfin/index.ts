@@ -1571,7 +1571,7 @@ async function buildSearchResultItems(
     ...(wantShows ? ['series' as const] : []),
   ]
 
-  const rawStremioMetas = stremioTypes.length
+  const rawStremioMetas = stremioTypes.length && config.stremioSearchEnabled
     ? await searchStremioMetas(searchTerm, stremioTypes).catch(() => [])
     : []
   const stremioMetas = rawStremioMetas.filter(meta => !isStremioErrorMeta(meta))
