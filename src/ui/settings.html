@@ -120,6 +120,13 @@
       </select>
       <div class="field-note">Versions are ordered by estimated Mbps.</div>
     </div>
+    <label class="check-item field" for="stremioSearchEnabled">
+      <input id="stremioSearchEnabled" type="checkbox">
+      <div class="check-meta">
+        <div class="check-title">Stremio search</div>
+        <div class="check-slug">Include add-on results when searching from Infuse or VidHub.</div>
+      </div>
+    </label>
   </section>
 
   <!-- Debrid -->
@@ -880,6 +887,7 @@
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
     document.getElementById('streamRankingMode').value = d.streamRankingMode || 'fetcherr'
     document.getElementById('mediaSourceSelection').checked = d.mediaSourceSelection === true
+    document.getElementById('stremioSearchEnabled').checked = d.stremioSearchEnabled === true
     document.getElementById('mediaSourceLimit').value = String(d.mediaSourceLimit === 5 ? 5 : 10)
     syncMediaSourceLimitVisibility()
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
@@ -1322,6 +1330,7 @@
       englishStreamMode: document.getElementById('englishStreamMode').value,
       streamRankingMode: document.getElementById('streamRankingMode').value,
       mediaSourceSelection: document.getElementById('mediaSourceSelection').checked,
+      stremioSearchEnabled: document.getElementById('stremioSearchEnabled').checked,
       mediaSourceLimit: document.getElementById('mediaSourceLimit').value,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,
