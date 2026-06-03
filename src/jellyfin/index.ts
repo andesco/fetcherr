@@ -2147,7 +2147,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const q: Record<string, string> = {}
     for (const [k, v] of Object.entries(req.query)) q[k.toLowerCase()] = queryValue(v)
 
-    const SearchTerm      = q.searchterm
+    const SearchTerm      = q.searchterm || q.namestartswith
     const SortBy          = q.sortby
     const SortOrder       = q.sortorder
     const ParentId        = q.parentid
