@@ -405,19 +405,8 @@ function containerScore(s: Stream): number {
   return 1
 }
 
-function clientCompatibilityPenalty(s: Stream, clientName = ''): number {
-  const client = clientName.toLowerCase()
-  if (!client.includes('swiftfin')) return 0
-
-  const text = streamMetadataText(s).toLowerCase()
-  let penalty = 0
-  if (/\b(dolby vision|dv)\b/.test(text)) penalty += 6
-  if (/\bhdr10\+\b|\bhdr\b/.test(text)) penalty += 4
-  if (/\btruehd\b|\batmos\b|\bdts[- ]hd\b|\bdtsx\b/.test(text)) penalty += 5
-  if (/\bremux\b/.test(text)) penalty += 3
-  if (/\b2160p\b|\b4k\b|\bufhd\b/.test(text)) penalty += 3
-  if (/\bhevc\b|h\.?265\b|x265\b/.test(text)) penalty += 2
-  return penalty
+function clientCompatibilityPenalty(_s: Stream, _clientName = ''): number {
+  return 0
 }
 
 function playableStreamsInProviderOrder(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {

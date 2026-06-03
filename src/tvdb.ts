@@ -104,6 +104,41 @@ export async function fetchEpisodeStillFallbacks(tvdbId: number, seasonNumber: n
   return map
 }
 
+const _imdbTvdbCache = new Map<string, number | null>()
+
+export async function imdbToTvdbId(imdbId: string): Promise<number | null> {
+  if (_imdbTvdbCache.has(imdbId)) return _imdbTvdbCache.get(imdbId)!
+
+  let result: number | null = null
+
+  if (config.tvdbApiKey) {
+    try {
+      const json = await tvdbGet(`/search?remoteId=${encodeURIComponent(imdbId)}`) as { data?: Array<{ id?: number; tvdb_id?: string }> }
+      const first = json.data?.[0]
+      if (first) {
+        result = typeof first.id === 'number' ? first.id
+          : first.tvdb_id ? parseInt(first.tvdb_id, 10)
+          : null
+      }
+    } catch { /* fall through to legacy */ }
+  }
+
+  if (result == null) {
+    try {
+      const res = await fetch(
+        `https://thetvdb.com/api/GetSeriesByRemoteID.php?imdbid=${encodeURIComponent(imdbId)}`,
+        { signal: AbortSignal.timeout(10_000) },
+      )
+      const text = await res.text()
+      const match = text.match(/<seriesid>(\d+)<\/seriesid>/)
+      if (match) result = parseInt(match[1], 10)
+    } catch { /* ignore */ }
+  }
+
+  _imdbTvdbCache.set(imdbId, result)
+  return result
+}
+
 export async function fetchSeriesLanguage(tvdbId: number): Promise<string> {
   if (!config.tvdbApiKey || !tvdbId) return ''
   const paths = [

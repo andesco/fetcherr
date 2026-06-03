@@ -36,20 +36,18 @@ docker compose up -d
 
 Open `http://YOUR_SERVER:9990/ui/setup-admin`, create an admin account, then enter your API keys and provider URLs in Settings.
 
-If you're switching to TorBox and want to support continued Fetcherr development, consider signing up with this referral link: https://torbox.app/subscription?referral=517608ee-35cb-458f-be00-850a2543a4f0
-
 ## Setup
 
 1. Deploy and start the container (see Quick Start above)
 2. Open `http://YOUR_SERVER:9990/ui/setup-admin` — create admin account
 3. Go to **Settings** and enter:
    - TMDB API key
-   - Real-Debrid or TorBox API key, if using a debrid provider
+   - Real-Debrid or TorBox API key, if using a supported debrid provider
    - One or more Stremio add-on manifest URLs (AIOStreams, Comet, Debridio, etc.)
 4. Optionally add Trakt or MDBList credentials to sync watchlists
 5. Connect your client (see below)
 
-### AIOStreams
+### Add-on Providers
 
 Configure AIOStreams with your provider, then paste the manifest URL into Fetcherr Settings under **Add-on Provider URLs**. Recommended settings:
 

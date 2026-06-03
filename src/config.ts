@@ -174,4 +174,12 @@ export const config = {
   mediaSourceSelection: parseBooleanSetting(process.env.MEDIA_SOURCE_SELECTION, false),
   mediaSourceLimit: parseMediaSourceLimit(process.env.MEDIA_SOURCE_LIMIT),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),
+  newznabUrl:        (process.env.NEWZNAB_URL ?? '').replace(/\/$/, ''),
+  newznabApiKey:     process.env.NEWZNAB_API_KEY ?? '',
+  nntpHost:          process.env.NNTP_HOST ?? '',
+  nntpPort:          parseInt(process.env.NNTP_PORT ?? '563', 10),
+  nntpUser:          process.env.NNTP_USER ?? '',
+  nntpPass:          process.env.NNTP_PASS ?? '',
+  nntpConnections:   parsePositiveIntegerSetting(process.env.NNTP_CONNECTIONS, 4),
+  nntpSsl:           parseBooleanSetting(process.env.NNTP_SSL, true),
 }

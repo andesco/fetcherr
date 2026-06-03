@@ -2537,7 +2537,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       runtimeTicks: number
     },
   ) {
-    if (!config.mediaSourceSelection) return item
     return addDetailMediaSources(item, headers, {
       itemId: input.itemId,
       sourceId: input.sourceId,
@@ -2558,7 +2557,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       runtimeTicks: number
     },
   ) {
-    if (!config.mediaSourceSelection) return item
     return addDetailMediaSources(item, headers, {
       itemId: input.itemId,
       sourceId: input.sourceId,
@@ -2612,7 +2610,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (stremioEpisode) {
       if (!await canUserAccessStremioMeta(currentUser, stremioEpisode.series, 'series')) return reply.code(404).send({ error: 'Not found' })
       const item = stremioEpisodeToItem(stremioEpisode.series, stremioEpisode.episode) as Record<string, unknown>
-      if (!config.mediaSourceSelection) return item
       const { series, episode } = stremioEpisode
       const externalId = episode.id || `${series.id}:${stremioEpisodeSeasonNumber(episode)}:${stremioEpisodeNumber(episode)}`
       const playPath = `/play/stremio/series/${encodeURIComponent(externalId)}`
@@ -2668,7 +2665,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       if (!ep) return reply.code(404).send({ error: 'Not found' })
       if (!isEpisodeVisibleToLibrary(ep)) return reply.code(404).send({ error: 'Not found' })
       const item = episodeToItem(ep, show, currentUser.id) as Record<string, unknown>
-      if (!config.mediaSourceSelection || !show.imdbId) return item
+      if (!show.imdbId) return item
       const playPath = `/play/${show.imdbId}/${ep.seasonNumber}/${ep.episodeNumber}`
       return addDetailMediaSources(item, headers, {
         itemId: id,
@@ -3304,9 +3301,15 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   // Video stream redirect (fallback for some Infuse/VidHub versions)
   app.get('/Videos/:id/stream', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const query = req.query as { playSessionId?: string; PlaySessionId?: string; mediaSourceId?: string; MediaSourceId?: string } | undefined
+    const query = req.query as { playSessionId?: string; PlaySessionId?: string; mediaSourceId?: string; MediaSourceId?: string; api_key?: string } | undefined
     const mediaSourceId = query?.mediaSourceId ?? query?.MediaSourceId
-    const user = requestUser(req.headers)
+    const sessionMatches = (query?.playSessionId ?? query?.PlaySessionId) === `fetcherr-${id}`
+    const sourceMatches = (query?.mediaSourceId ?? query?.MediaSourceId) === id
+    const headersWithToken = query?.api_key
+      ? { ...req.headers as Record<string, string | string[] | undefined>, 'x-emby-token': query.api_key }
+      : req.headers as Record<string, string | string[] | undefined>
+    const user = requestUser(headersWithToken) ?? ((sessionMatches || sourceMatches) ? fallbackUser() : null)
+
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
 
     const origin = buildPlaybackOrigin(req.headers as Record<string, string | undefined>)
