@@ -189,6 +189,9 @@ function idToStremioSearchMeta(id: string): { meta: StremioMeta; mediaType: Stre
     stremioSearchCache.delete(cached.sourceId)
     return null
   }
+  const refreshed = { ...cached, expiresAt: Date.now() + STREMIO_SEARCH_CACHE_TTL_MS }
+  stremioSearchCache.set(cached.itemId, refreshed)
+  stremioSearchCache.set(cached.sourceId, refreshed)
   return { meta: cached.meta, mediaType: cached.mediaType, itemId: cached.itemId, sourceId: cached.sourceId, requestedId: id }
 }
 
