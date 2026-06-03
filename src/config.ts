@@ -78,10 +78,16 @@ export type AudioLanguage =
 export type EnglishStreamMode = 'off' | 'prefer' | 'require'
 export type DirectPlaybackMode = 'off' | 'torrentsOnly' | 'all'
 export type StreamRankingMode = 'fetcherr' | 'provider'
+export type MediaSourceLimit = 5 | 10
 
 export function parseStreamRankingMode(value: string | undefined): StreamRankingMode {
   return value === 'provider' ? 'provider' : 'fetcherr'
 }
+
+export function parseMediaSourceLimit(value: string | undefined): MediaSourceLimit {
+  return value === '5' ? 5 : 10
+}
+
 export type ShowAddDefaultMode = 'all' | 'latest'
 export type MovieReleaseMode = 'digital' | 'theatrical'
 
@@ -158,11 +164,14 @@ export const config = {
   showAddDefaultMode: parseShowAddDefaultMode(process.env.SHOW_ADD_DEFAULT_MODE),
   movieReleaseMode: parseMovieReleaseMode(process.env.MOVIE_RELEASE_MODE),
   streamProviderUrls: parseStreamProviderUrls(process.env.STREAM_PROVIDER_URLS ?? ''),
+  stremioSearchProviderUrls: [] as string[],
   allowNotWebReadyDirectStreams: parseBooleanSetting(process.env.ALLOW_NOT_WEB_READY_DIRECT_STREAMS, false),
   musicAddonUrls: parseMusicAddonUrls(process.env.MUSIC_ADDON_URLS ?? process.env.MUSIC_ADDON_URL ?? process.env.SPOTIFLAC_URL ?? ''),
   preferredAudioLanguage: parseAudioLanguage(process.env.PREFERRED_AUDIO_LANGUAGE),
   englishStreamMode: parseEnglishStreamMode(process.env.ENGLISH_STREAM_MODE ?? ''),
   directPlaybackMode: parseDirectPlaybackMode(process.env.DIRECT_PLAYBACK_MODE),
   streamRankingMode: parseStreamRankingMode(process.env.STREAM_RANKING_MODE),
+  mediaSourceSelection: parseBooleanSetting(process.env.MEDIA_SOURCE_SELECTION, false),
+  mediaSourceLimit: parseMediaSourceLimit(process.env.MEDIA_SOURCE_LIMIT),
   serverUrl:         (process.env.SERVER_URL ?? 'http://localhost:9990').replace(/\/$/, ''),
 }

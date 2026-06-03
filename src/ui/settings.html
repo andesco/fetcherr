@@ -105,6 +105,21 @@
       </select>
       <div class="field-note">Use Provider order when your add-on already ranks streams correctly.</div>
     </div>
+    <label class="check-item field" for="mediaSourceSelection">
+      <input id="mediaSourceSelection" type="checkbox" onchange="syncMediaSourceLimitVisibility()">
+      <div class="check-meta">
+        <div class="check-title">Media source selection</div>
+        <div class="check-slug">Shows cached stream options for movie and episode playback.</div>
+      </div>
+    </label>
+    <div class="field" id="mediaSourceLimitField" hidden>
+      <label for="mediaSourceLimit">Sources Offered</label>
+      <select id="mediaSourceLimit">
+        <option value="10">10 sources</option>
+        <option value="5">5 sources</option>
+      </select>
+      <div class="field-note">Versions are ordered by estimated Mbps.</div>
+    </div>
   </section>
 
   <!-- Debrid -->
@@ -165,7 +180,7 @@
 
   <section class="section" id="users">
     <div class="section-title">Users</div>
-    <div class="field-note">Admin and user accounts are unrestricted. Kids are limited to kid-safe ratings.</div>
+    <div class="field-note">Set an optional ratings limit for User and Kids accounts. Admin accounts are always unrestricted.</div>
     <div class="user-table-wrap">
       <div class="user-table-scroll">
         <div id="userList"></div>
@@ -341,11 +356,15 @@
       </div>
       <div class="field">
         <label for="modalRole">Role</label>
-        <select id="modalRole">
+        <select id="modalRole" onchange="syncUserModalRatingLimit()">
           <option value="admin">Admin</option>
           <option value="user">User</option>
           <option value="kids">Kids</option>
         </select>
+      </div>
+      <div class="field">
+        <label for="modalMaxRating">Ratings Limit</label>
+        <select id="modalMaxRating" class="rating-limit-select"></select>
       </div>
     </div>
     <div class="modal-actions">
@@ -618,6 +637,11 @@
     el.textContent = msg
   }
 
+  function syncMediaSourceLimitVisibility() {
+    const enabled = document.getElementById('mediaSourceSelection').checked
+    document.getElementById('mediaSourceLimitField').hidden = !enabled
+  }
+
   function setSecretPlaceholder(id, hasStored, emptyPlaceholder) {
     const input = document.getElementById(id)
     input.value = ''
@@ -855,6 +879,9 @@
     document.getElementById('preferredAudioLanguage').value = d.preferredAudioLanguage || 'en'
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
     document.getElementById('streamRankingMode').value = d.streamRankingMode || 'fetcherr'
+    document.getElementById('mediaSourceSelection').checked = d.mediaSourceSelection === true
+    document.getElementById('mediaSourceLimit').value = String(d.mediaSourceLimit === 5 ? 5 : 10)
+    syncMediaSourceLimitVisibility()
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
     setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
     setSecretPlaceholder('tmdbApiKey', hasStoredTmdbApiKey, 'Enter your TMDB API key')
@@ -894,6 +921,40 @@
     ].map(([value, label]) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`).join('')
   }
 
+  function ratingLimitOptions(selected) {
+    const value = selected == null || selected === '' ? 'unrestricted' : String(selected)
+    return [
+      ['unrestricted', 'No restrictions'],
+      ['0', 'Level 0: G, TV-Y, TV-G'],
+      ['1', 'Level 1: PG, TV-Y7, TV-Y7-FV, TV-PG'],
+      ['2', 'Level 2: PG-13, TV-14'],
+      ['3', 'Level 3: R, TV-MA'],
+      ['4', 'Level 4: NC-17'],
+    ].map(([optionValue, label]) => `<option value="${optionValue}" ${optionValue === value ? 'selected' : ''}>${label}</option>`).join('')
+  }
+
+  function defaultRatingLimitForRole(role) {
+    return role === 'kids' ? '1' : 'unrestricted'
+  }
+
+  function setUserModalRatingLimit(value) {
+    document.getElementById('modalMaxRating').innerHTML = ratingLimitOptions(value)
+    document.getElementById('modalMaxRating').value = value
+  }
+
+  function syncUserModalRatingLimit() {
+    const role = document.getElementById('modalRole').value
+    const rating = document.getElementById('modalMaxRating')
+    rating.disabled = role === 'admin'
+    if (role === 'admin') {
+      setUserModalRatingLimit('unrestricted')
+      return
+    }
+    if (userModalMode === 'create') {
+      setUserModalRatingLimit(defaultRatingLimitForRole(role))
+    }
+  }
+
   function renderUsers() {
     const el = document.getElementById('userList')
     if (!managedUsers.length) {
@@ -909,6 +970,7 @@
           <tr>
             <th>Username</th>
             <th>Role</th>
+            <th>Ratings Limit</th>
             <th>Password</th>
             <th>Actions</th>
           </tr>
@@ -923,6 +985,11 @@
               <td data-label="Role">
                 <select ${user.deleted ? 'disabled' : ''} onchange="updateUserRole('${user.id}', this.value)">
                   ${roleOptions(user.role)}
+                </select>
+              </td>
+              <td data-label="Ratings Limit">
+                <select class="rating-limit-select" ${user.deleted || user.role === 'admin' ? 'disabled' : ''} onchange="updateUserField('${user.id}', 'maxRating', this.value)">
+                  ${ratingLimitOptions(user.role === 'admin' ? 'unrestricted' : user.maxRating)}
                 </select>
               </td>
               <td data-label="Password">
@@ -955,13 +1022,16 @@
       id: tempId,
       username,
       role: document.getElementById('modalRole').value,
-      maxRating: 'unrestricted',
+      maxRating: document.getElementById('modalRole').value === 'admin'
+        ? 'unrestricted'
+        : document.getElementById('modalMaxRating').value,
       pendingPassword: password,
       isNew: true,
       deleted: false,
     })
     closeUserModal()
     renderUsers()
+    _markDirty()
     showOut('User queued. Click Save Settings to apply.', 'info')
   }
 
@@ -969,13 +1039,17 @@
     const user = managedUsers.find(u => u.id === id)
     if (!user) return
     user[key] = value
+    _markDirty()
   }
 
   function updateUserRole(id, value) {
     const user = managedUsers.find(u => u.id === id)
     if (!user) return
     user.role = value
+    if (value === 'admin') user.maxRating = 'unrestricted'
+    if (value === 'kids' && (!user.maxRating || user.maxRating === 'unrestricted')) user.maxRating = defaultRatingLimitForRole(value)
     renderUsers()
+    _markDirty()
   }
 
   function setUserPassword(id) {
@@ -990,6 +1064,8 @@
     document.getElementById('modalPassword').value = ''
     document.getElementById('modalRole').value = user.role
     document.getElementById('modalRole').disabled = true
+    setUserModalRatingLimit(user.role === 'admin' ? 'unrestricted' : user.maxRating || defaultRatingLimitForRole(user.role))
+    document.getElementById('modalMaxRating').disabled = user.role === 'admin'
     document.getElementById('userModalConfirmBtn').textContent = 'Set Password'
     document.getElementById('userModalBackdrop').classList.add('open')
     document.addEventListener('keydown', onUserModalKey)
@@ -1001,6 +1077,7 @@
     if (!user) return
     user.deleted = !user.deleted
     renderUsers()
+    _markDirty()
   }
 
   function openNewUserModal() {
@@ -1013,6 +1090,8 @@
     document.getElementById('modalPassword').value = ''
     document.getElementById('modalRole').value = 'user'
     document.getElementById('modalRole').disabled = false
+    setUserModalRatingLimit(defaultRatingLimitForRole('user'))
+    document.getElementById('modalMaxRating').disabled = false
     document.getElementById('userModalConfirmBtn').textContent = 'Add User'
     document.getElementById('userModalBackdrop').classList.add('open')
     document.addEventListener('keydown', onUserModalKey)
@@ -1039,8 +1118,10 @@
       const user = managedUsers.find(u => u.id === userModalTargetId)
       if (!user) return
       user.pendingPassword = password
+      if (user.role !== 'admin') user.maxRating = document.getElementById('modalMaxRating').value
       closeUserModal()
       renderUsers()
+      _markDirty()
       showOut(`Password update queued for ${user.username}.`, 'info')
       return
     }
@@ -1240,6 +1321,8 @@
       preferredAudioLanguage: document.getElementById('preferredAudioLanguage').value,
       englishStreamMode: document.getElementById('englishStreamMode').value,
       streamRankingMode: document.getElementById('streamRankingMode').value,
+      mediaSourceSelection: document.getElementById('mediaSourceSelection').checked,
+      mediaSourceLimit: document.getElementById('mediaSourceLimit').value,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,
       movieReleaseMode: document.getElementById('movieReleaseMode').value,
@@ -1294,12 +1377,14 @@
             username: user.username,
             password: user.pendingPassword,
             role: user.role,
+            maxRating: user.role === 'admin' ? 'unrestricted' : user.maxRating || 'unrestricted',
           }
         : {
             id: user.id,
             username: user.username,
             ...(user.pendingPassword ? { password: user.pendingPassword } : {}),
             role: user.role,
+            maxRating: user.role === 'admin' ? 'unrestricted' : user.maxRating || 'unrestricted',
           }
 
       const userRes = await fetch('/ui/users-data', {

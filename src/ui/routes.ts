@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists } from '../config.js'
+import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistEntries } from '../mdblist.js'
@@ -179,6 +179,24 @@ async function validateApiKeyForService(service: ApiKeyService, key: string) {
   if (service === 'tmdb') return validateTmdbApiKey(key)
   if (service === 'tb') return validateTorBoxApiKey(key)
   return validateTvdbApiKey(key)
+}
+
+function refreshStreamProviderConfig(): void {
+  const rdProviderUrls = getSetting('rdStreamProviderUrls') ?? ''
+  const torBoxProviderUrls = getSetting('torBoxStreamProviderUrls') ?? ''
+  const genericProviderUrls = getSetting('streamProviderUrls') ?? ''
+  config.streamProviderUrls = collectStreamProviderUrls(
+    rdProviderUrls,
+    torBoxProviderUrls,
+    genericProviderUrls,
+  )
+  config.stremioSearchProviderUrls = collectStreamProviderUrls(
+    rdProviderUrls,
+    torBoxProviderUrls,
+    genericProviderUrls,
+    config.streamProviderUrls.join('\n'),
+    config.sootioUrl,
+  )
 }
 
 function html(file: string) {
@@ -711,6 +729,8 @@ export async function uiRoutes(app: FastifyInstance) {
       preferredAudioLanguage: config.preferredAudioLanguage,
       englishStreamMode: config.englishStreamMode,
       streamRankingMode: config.streamRankingMode,
+      mediaSourceSelection: config.mediaSourceSelection,
+      mediaSourceLimit: config.mediaSourceLimit,
       serverUrl:         config.serverUrl,
       traktClientId:     config.traktClientId,
       traktWatchlistMovies: config.traktWatchlistMovies,
@@ -825,11 +845,7 @@ export async function uiRoutes(app: FastifyInstance) {
       const enabled = parseBooleanSetting(String(body.torBoxCleanupEnabled), true)
       setSetting('torBoxCleanupMode', enabled ? 'delete' : 'keep')
     }
-    config.streamProviderUrls = collectStreamProviderUrls(
-      getSetting('rdStreamProviderUrls') ?? '',
-      getSetting('torBoxStreamProviderUrls') ?? '',
-      getSetting('streamProviderUrls') ?? '',
-    )
+    refreshStreamProviderConfig()
     if (typeof body.englishStreamMode === 'string') {
       const mode = parseEnglishStreamMode(body.englishStreamMode)
       setSetting('englishStreamMode', mode)
@@ -839,6 +855,16 @@ export async function uiRoutes(app: FastifyInstance) {
       const mode = parseStreamRankingMode(body.streamRankingMode)
       setSetting('streamRankingMode', mode)
       config.streamRankingMode = mode
+    }
+    if (body.mediaSourceSelection != null) {
+      const enabled = parseBooleanSetting(String(body.mediaSourceSelection), false)
+      setSetting('mediaSourceSelection', enabled ? 'true' : 'false')
+      config.mediaSourceSelection = enabled
+    }
+    if (body.mediaSourceLimit != null) {
+      const limit = parseMediaSourceLimit(String(body.mediaSourceLimit))
+      setSetting('mediaSourceLimit', String(limit))
+      config.mediaSourceLimit = limit
     }
     if (typeof body.preferredAudioLanguage === 'string') {
       const language = parseAudioLanguage(body.preferredAudioLanguage)
