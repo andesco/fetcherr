@@ -758,6 +758,7 @@ export async function uiRoutes(app: FastifyInstance) {
         username: user.username,
         role: user.role,
         maxRating: user.maxRating,
+        searchEnabled: user.searchEnabled,
       })),
     }
   })
@@ -971,6 +972,7 @@ export async function uiRoutes(app: FastifyInstance) {
       password?: string
       role?: string
       maxRating?: string
+      searchEnabled?: boolean
       action?: string
     }
     const role = body.role != null
@@ -987,11 +989,12 @@ export async function uiRoutes(app: FastifyInstance) {
           password: body.password,
           role,
           maxRating: body.maxRating,
+          searchEnabled: body.searchEnabled,
         })
-        return { ok: true, user: { id: user.id, username: user.username, role: user.role, maxRating: user.maxRating } }
+        return { ok: true, user: { id: user.id, username: user.username, role: user.role, maxRating: user.maxRating, searchEnabled: user.searchEnabled } }
       }
-      const user = createUser(body.username ?? '', body.password ?? '', role ?? 'user', body.maxRating ?? 'unrestricted')
-      return { ok: true, user: { id: user.id, username: user.username, role: user.role, maxRating: user.maxRating } }
+      const user = createUser(body.username ?? '', body.password ?? '', role ?? 'user', body.maxRating ?? 'unrestricted', body.searchEnabled)
+      return { ok: true, user: { id: user.id, username: user.username, role: user.role, maxRating: user.maxRating, searchEnabled: user.searchEnabled } }
     } catch (err) {
       return reply.code(400).send({ error: String(err instanceof Error ? err.message : err) })
     }

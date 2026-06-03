@@ -124,7 +124,7 @@
       <input id="stremioSearchEnabled" type="checkbox" onchange="syncStremioSearchSourceVisibility()">
       <div class="check-meta">
         <div class="check-title">Stremio search</div>
-        <div class="check-slug">Include add-on results when searching from Infuse or VidHub.</div>
+        <div class="check-slug">Include external Stremio, Trakt, or add-on results for users who also have Stremio Search enabled below.</div>
       </div>
     </label>
     <div class="field" id="stremioSearchSourceField" hidden>
@@ -661,6 +661,7 @@
   function syncStremioSearchSourceVisibility() {
     const enabled = document.getElementById('stremioSearchEnabled').checked
     document.getElementById('stremioSearchSourceField').hidden = !enabled
+    renderUsers()
   }
 
   function setSecretPlaceholder(id, hasStored, emptyPlaceholder) {
@@ -961,6 +962,10 @@
     return role === 'kids' ? '1' : 'unrestricted'
   }
 
+  function defaultSearchEnabledForRole(role) {
+    return role !== 'kids'
+  }
+
   function setUserModalRatingLimit(value) {
     document.getElementById('modalMaxRating').innerHTML = ratingLimitOptions(value)
     document.getElementById('modalMaxRating').value = value
@@ -988,6 +993,7 @@
       </div>`
       return
     }
+    const stremioSearchGlobalEnabled = document.getElementById('stremioSearchEnabled').checked
     el.innerHTML = `
       <table class="user-table">
         <thead>
@@ -995,6 +1001,7 @@
             <th>Username</th>
             <th>Role</th>
             <th>Ratings Limit</th>
+            <th>Stremio Search</th>
             <th>Password</th>
             <th>Actions</th>
           </tr>
@@ -1007,7 +1014,7 @@
                 <div class="user-id-cell">${user.isNew ? 'New user' : escapeHtml(user.id)}</div>
               </td>
               <td data-label="Role">
-                <select ${user.deleted ? 'disabled' : ''} onchange="updateUserRole('${user.id}', this.value)">
+                <select class="role-select" ${user.deleted ? 'disabled' : ''} onchange="updateUserRole('${user.id}', this.value)">
                   ${roleOptions(user.role)}
                 </select>
               </td>
@@ -1015,6 +1022,11 @@
                 <select class="rating-limit-select" ${user.deleted || user.role === 'admin' ? 'disabled' : ''} onchange="updateUserField('${user.id}', 'maxRating', this.value)">
                   ${ratingLimitOptions(user.role === 'admin' ? 'unrestricted' : user.maxRating)}
                 </select>
+              </td>
+              <td data-label="Stremio Search">
+                <label class="inline-check ${stremioSearchGlobalEnabled ? '' : 'disabled'}">
+                  <input type="checkbox" aria-label="Stremio Search" ${user.searchEnabled ? 'checked' : ''} ${user.deleted || !stremioSearchGlobalEnabled ? 'disabled' : ''} onchange="updateUserField('${user.id}', 'searchEnabled', this.checked)">
+                </label>
               </td>
               <td data-label="Password">
                 <div class="user-actions">
@@ -1049,6 +1061,7 @@
       maxRating: document.getElementById('modalRole').value === 'admin'
         ? 'unrestricted'
         : document.getElementById('modalMaxRating').value,
+      searchEnabled: defaultSearchEnabledForRole(document.getElementById('modalRole').value),
       pendingPassword: password,
       isNew: true,
       deleted: false,
@@ -1072,6 +1085,7 @@
     user.role = value
     if (value === 'admin') user.maxRating = 'unrestricted'
     if (value === 'kids' && (!user.maxRating || user.maxRating === 'unrestricted')) user.maxRating = defaultRatingLimitForRole(value)
+    user.searchEnabled = defaultSearchEnabledForRole(value)
     renderUsers()
     _markDirty()
   }
@@ -1404,6 +1418,7 @@
             password: user.pendingPassword,
             role: user.role,
             maxRating: user.role === 'admin' ? 'unrestricted' : user.maxRating || 'unrestricted',
+            searchEnabled: user.searchEnabled === true,
           }
         : {
             id: user.id,
@@ -1411,6 +1426,7 @@
             ...(user.pendingPassword ? { password: user.pendingPassword } : {}),
             role: user.role,
             maxRating: user.role === 'admin' ? 'unrestricted' : user.maxRating || 'unrestricted',
+            searchEnabled: user.searchEnabled === true,
           }
 
       const userRes = await fetch('/ui/users-data', {

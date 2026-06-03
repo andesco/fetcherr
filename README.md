@@ -72,7 +72,16 @@ Enable **Media source selection** in Settings to offer source choices. By defaul
 
 ## Connecting Infuse
 
-Add Fetcherr as a Jellyfin server in Infuse with your server URL and a Fetcherr account. Enable **Library Mode**, **Auto Scan**, and **Install InfuseSync Plugin**.
+Add Fetcherr as a Jellyfin server in Infuse with your server URL and a Fetcherr account. Enable **Library Mode** and **Auto Scan** for the normal library connection.
+
+### Infuse Search
+
+Fetcherr can also be added to Infuse a second time for broad search. Use the same Fetcherr server and set of accounts, set the connection **Path** to `/search`, and do not enable Library Mode. Broad Stremio search must be enabled globally in Fetcherr Settings and for the Fetcherr user account.
+
+Search results can always include synced Fetcherr library items. When Stremio search is enabled, results can also include Cinemeta, Trakt, or configured add-on catalogs such as AIOStreams. Fetcherr uses TMDB metadata for local catalog entries and search-result details.
+
+> [!NOTE]
+> The `/search` endpoint presents a separate Jellyfin server identity with no library folders or library items. Infuse can use that second connection for search results, while the normal connection remains available for Library Mode browsing and scanning.
 
 ## Connecting VidHub
 

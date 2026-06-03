@@ -84,6 +84,7 @@ export interface AppUser {
   passwordHash: string
   role: AppUserRole
   maxRating: string
+  searchEnabled: boolean
   createdAt: string
   updatedAt: string
 }
@@ -300,6 +301,7 @@ CREATE TABLE IF NOT EXISTS app_users (
   password_hash TEXT NOT NULL DEFAULT '',
   role          TEXT NOT NULL CHECK (role IN ('admin', 'user', 'kids')),
   max_rating    TEXT NOT NULL DEFAULT 'unrestricted',
+  search_enabled INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
@@ -491,6 +493,7 @@ export function getDb(): Database.Database {
     )`) } catch { /* already exists */ }
     try { _db.exec(`CREATE INDEX IF NOT EXISTS torbox_cleanup_jobs_delete_at ON torbox_cleanup_jobs(delete_at)`) } catch { /* already exists */ }
     migrateAppUserRoles(_db)
+    migrateAppUserSearchEnabled(_db)
     migrateLegacyUserData(_db)
   }
   return _db
@@ -535,6 +538,10 @@ function effectiveMaxRatingForRole(role: AppUserRole, maxRating: string): MaxRat
   return normalizeMaxRating(maxRating)
 }
 
+function defaultSearchEnabledForRole(role: AppUserRole): boolean {
+  return role !== 'kids'
+}
+
 function row2appUser(r: Record<string, unknown>): AppUser {
   const role = normalizeUserRole(r.role as string)
   return {
@@ -543,6 +550,7 @@ function row2appUser(r: Record<string, unknown>): AppUser {
     passwordHash: (r.password_hash as string) ?? '',
     role,
     maxRating: effectiveMaxRatingForRole(role, (r.max_rating as string) ?? 'unrestricted'),
+    searchEnabled: r.search_enabled == null ? defaultSearchEnabledForRole(role) : Number(r.search_enabled) !== 0,
     createdAt: (r.created_at as string) ?? '',
     updatedAt: (r.updated_at as string) ?? '',
   }
@@ -626,15 +634,25 @@ function migrateAppUserRoles(db: Database.Database): void {
         password_hash TEXT NOT NULL DEFAULT '',
         role          TEXT NOT NULL CHECK (role IN ('admin', 'user', 'kids')),
         max_rating    TEXT NOT NULL DEFAULT 'unrestricted',
+        search_enabled INTEGER NOT NULL DEFAULT 1,
         created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
         updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
       );
-      INSERT INTO app_users_new (id, username, password_hash, role, max_rating, created_at, updated_at)
-      SELECT id, username, password_hash, role, max_rating, created_at, updated_at
+      INSERT INTO app_users_new (id, username, password_hash, role, max_rating, search_enabled, created_at, updated_at)
+      SELECT id, username, password_hash, role, max_rating, CASE role WHEN 'kids' THEN 0 ELSE 1 END, created_at, updated_at
       FROM app_users;
       DROP TABLE app_users;
       ALTER TABLE app_users_new RENAME TO app_users;
     `)
+  })()
+}
+
+function migrateAppUserSearchEnabled(db: Database.Database): void {
+  const columns = db.prepare(`PRAGMA table_info(app_users)`).all() as Array<{ name: string }>
+  if (columns.some(column => column.name === 'search_enabled')) return
+  db.transaction(() => {
+    db.exec(`ALTER TABLE app_users ADD COLUMN search_enabled INTEGER NOT NULL DEFAULT 1`)
+    db.prepare(`UPDATE app_users SET search_enabled = 0 WHERE role = 'kids'`).run()
   })()
 }
 
@@ -1545,28 +1563,35 @@ export function verifyUserCredentials(username: string, password: string): AppUs
   return verifyPasswordHash(password, user.passwordHash) ? user : null
 }
 
-export function createUser(username: string, password: string, role: AppUserRole, maxRating: string): AppUser {
+export function createUser(
+  username: string,
+  password: string,
+  role: AppUserRole,
+  maxRating: string,
+  searchEnabled = defaultSearchEnabledForRole(role),
+): AppUser {
   const normalized = normalizeUsername(username)
   if (!normalized) throw new Error('Username is required')
   if (!password.trim()) throw new Error('Password is required')
   const id = role === 'admin' && countUsers() === 0 ? DEFAULT_ADMIN_USER_ID : randomGuidLikeId()
   const effectiveMaxRating = effectiveMaxRatingForRole(role, maxRating)
   getDb().prepare(`
-    INSERT INTO app_users (id, username, password_hash, role, max_rating, updated_at)
-    VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-  `).run(id, normalized, hashPassword(password), role, effectiveMaxRating)
+    INSERT INTO app_users (id, username, password_hash, role, max_rating, search_enabled, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+  `).run(id, normalized, hashPassword(password), role, effectiveMaxRating, searchEnabled ? 1 : 0)
   return getUserById(id)!
 }
 
 export function updateUser(
   userId: string,
-  updates: { username?: string; password?: string; role?: AppUserRole; maxRating?: string },
+  updates: { username?: string; password?: string; role?: AppUserRole; maxRating?: string; searchEnabled?: boolean },
 ): AppUser {
   const existing = getUserById(userId)
   if (!existing) throw new Error('User not found')
   const username = updates.username != null ? normalizeUsername(updates.username) : existing.username
   const role = updates.role ?? existing.role
   const maxRating = effectiveMaxRatingForRole(role, updates.maxRating != null ? updates.maxRating : existing.maxRating)
+  const searchEnabled = updates.searchEnabled ?? existing.searchEnabled
   const passwordHash = updates.password && updates.password.trim()
     ? hashPassword(updates.password)
     : existing.passwordHash
@@ -1577,9 +1602,9 @@ export function updateUser(
   }
   getDb().prepare(`
     UPDATE app_users
-    SET username = ?, password_hash = ?, role = ?, max_rating = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    SET username = ?, password_hash = ?, role = ?, max_rating = ?, search_enabled = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
     WHERE id = ?
-  `).run(username, passwordHash, role, maxRating, userId)
+  `).run(username, passwordHash, role, maxRating, searchEnabled ? 1 : 0, userId)
   return getUserById(userId)!
 }
 

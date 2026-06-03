@@ -2100,6 +2100,31 @@ label {
   text-overflow: ellipsis;
 }
 
+.user-table .role-select {
+  width: 5rem;
+  min-width: 5rem;
+}
+
+.user-table .inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.user-table .inline-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.user-table .inline-check.disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
 .username-cell {
   font-size: 14px;
 }
@@ -2545,13 +2570,16 @@ body.dashboard-page {
 
   .settings-page .user-table tbody tr {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(104px, .45fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
-      "identity role"
+      "identity identity"
+      "role role"
       "limit limit"
+      "search search"
       "password action";
-    gap: 10px;
-    padding: 12px;
+    gap: 14px 10px;
+    align-items: start;
+    padding: 14px;
     border-bottom: 1px solid var(--border);
   }
 
@@ -2570,10 +2598,23 @@ body.dashboard-page {
   .settings-page .user-table tbody td:nth-child(1) { grid-area: identity; }
   .settings-page .user-table tbody td:nth-child(2) { grid-area: role; }
   .settings-page .user-table tbody td:nth-child(3) { grid-area: limit; }
-  .settings-page .user-table tbody td:nth-child(4) { grid-area: password; }
-  .settings-page .user-table tbody td:nth-child(5) { grid-area: action; }
+  .settings-page .user-table tbody td:nth-child(4) { grid-area: search; }
+  .settings-page .user-table tbody td:nth-child(5) { grid-area: password; }
+  .settings-page .user-table tbody td:nth-child(6) { grid-area: action; }
 
   .settings-page .user-table tbody td::before {
+    content: attr(data-label) ":";
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted-strong);
+    font-size: 11px;
+    font-weight: 750;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .settings-page .user-table tbody td:nth-child(5)::before,
+  .settings-page .user-table tbody td:nth-child(6)::before {
     display: none;
   }
 
@@ -2585,9 +2626,24 @@ body.dashboard-page {
     width: 100%;
   }
 
+  .settings-page .user-table .role-select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .settings-page .user-table .inline-check {
+    min-height: 38px;
+    margin-bottom: 0;
+  }
+
   .settings-page .user-actions {
     align-items: stretch;
     gap: 6px;
+    margin-left: 0;
+  }
+
+  .settings-page .user-table tbody td:nth-child(5) .user-actions {
+    flex-direction: column;
   }
 
   .settings-page .user-actions .btn {
@@ -2596,6 +2652,7 @@ body.dashboard-page {
   }
 
   .settings-page .password-state {
+    display: block;
     white-space: normal;
   }
 
@@ -2891,13 +2948,16 @@ body.dashboard-page {
 
   .user-table tbody tr {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(104px, .45fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
-      "identity role"
+      "identity identity"
+      "role role"
       "limit limit"
+      "search search"
       "password action";
-    gap: 10px;
-    padding: 12px;
+    gap: 14px 10px;
+    align-items: start;
+    padding: 14px;
     border-bottom: 1px solid var(--border);
   }
 
@@ -2916,10 +2976,23 @@ body.dashboard-page {
   .user-table tbody td:nth-child(1) { grid-area: identity; }
   .user-table tbody td:nth-child(2) { grid-area: role; }
   .user-table tbody td:nth-child(3) { grid-area: limit; }
-  .user-table tbody td:nth-child(4) { grid-area: password; }
-  .user-table tbody td:nth-child(5) { grid-area: action; }
+  .user-table tbody td:nth-child(4) { grid-area: search; }
+  .user-table tbody td:nth-child(5) { grid-area: password; }
+  .user-table tbody td:nth-child(6) { grid-area: action; }
 
   .user-table tbody td::before {
+    content: attr(data-label) ":";
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted-strong);
+    font-size: 11px;
+    font-weight: 750;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .user-table tbody td:nth-child(5)::before,
+  .user-table tbody td:nth-child(6)::before {
     display: none;
   }
 
@@ -2931,9 +3004,24 @@ body.dashboard-page {
     width: 100%;
   }
 
+  .user-table .role-select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .user-table .inline-check {
+    min-height: 38px;
+    margin-bottom: 0;
+  }
+
   .user-actions {
     align-items: stretch;
     gap: 6px;
+    margin-left: 0;
+  }
+
+  .user-table tbody td:nth-child(5) .user-actions {
+    flex-direction: column;
   }
 
   .user-actions .btn {
@@ -2942,6 +3030,7 @@ body.dashboard-page {
   }
 
   .password-state {
+    display: block;
     white-space: normal;
   }
 
