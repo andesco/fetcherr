@@ -1,5 +1,5 @@
 import { config } from './config.js'
-import type { StremioMeta, StremioMediaType } from './sootio.js'
+import { fetchStremioMeta, type StremioMeta, type StremioMediaType } from './sootio.js'
 import { DEFAULT_ADMIN_USER_ID, getDb, getSetting, hasAnySourceItem, listSourceKeys, pruneOrphanedMovies, pruneOrphanedShows, removeSourceKey, replaceSourceItems, setSetting, syncPlayed, upsertManualShowSubscription } from './db.js'
 import { fetchMovieByTmdbId, fetchShowByTmdbId } from './tmdb.js'
 
@@ -701,7 +701,7 @@ export async function searchTraktMetas(query: string, types: StremioMediaType[])
   try {
     const { status, data } = await traktRequest('GET', `/search/${traktTypes}?query=${encodeURIComponent(query)}&extended=full&limit=20`)
     if (status !== 200) return []
-    return (data as TraktSearchItem[]).map(r => {
+    const basic = (data as TraktSearchItem[]).map(r => {
       const item = r.movie ?? r.show
       const mediaType: StremioMediaType = r.type === 'show' ? 'series' : 'movie'
       const imdbId = item?.ids?.imdb
@@ -710,6 +710,13 @@ export async function searchTraktMetas(query: string, types: StremioMediaType[])
       if (!id) return null
       return { id, type: mediaType, name: item?.title, year: item?.year, imdb_id: imdbId } as StremioMeta
     }).filter((m): m is StremioMeta => m !== null)
+    const enriched = await Promise.allSettled(
+      basic.map(async meta => {
+        const detailed = await fetchStremioMeta(meta.type as StremioMediaType, meta.id).catch(() => null)
+        return detailed ? { ...meta, poster: detailed.poster, background: detailed.background } : meta
+      })
+    )
+    return enriched.flatMap(r => r.status === 'fulfilled' ? [r.value] : [])
   } catch {
     return []
   }
