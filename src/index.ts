@@ -16,6 +16,7 @@ import {
   resolveStream as tbResolveStream,
   rehydrateTorBoxCleanupJobs,
   touchDownloadUrl as touchTorBoxDownloadUrl,
+  trackDirectTorBoxUrl,
 } from './torbox.js'
 import { getShowByImdbId, getMovieByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, isEpisodeVisibleToLibrary, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
@@ -658,6 +659,7 @@ async function maybeResolveDirectPlaybackCandidate(
   }
 
   const resolvedUrl = await resolveDirectPlaybackUrl(stream.url)
+  trackDirectTorBoxUrl(stream.url)
   app.log.info(
     `play: direct HTTP stream selected for ${label} from ${directUrlHost(resolvedUrl)}` +
     (directFilename ? ` → ${directFilename}` : '')
@@ -830,6 +832,7 @@ async function resolvePlayableStream(
           }
 
           const resolvedUrl = await resolveDirectPlaybackUrl(stream.url)
+          trackDirectTorBoxUrl(stream.url)
           app.log.info(`play: direct stream selected for ${label} from ${directUrlHost(resolvedUrl)}${directFilename ? ` → ${directFilename}` : ''}`)
           clearFailedPlay(cacheKey)
           return { url: resolvedUrl, filename: directFilename }
