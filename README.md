@@ -76,7 +76,16 @@ Add Fetcherr as a Jellyfin server in Infuse with your server URL and a Fetcherr 
 
 ### Infuse Search
 
-Fetcherr can also be added to Infuse a second time for broad search. Use the same Fetcherr server and set of accounts, set the connection **Path** to `/search`, and do not enable Library Mode. Broad Stremio search must be enabled globally in Fetcherr Settings and for the Fetcherr user account.
+Fetcherr can also be added to Infuse a second time for broad search:
+
+1. In Infuse, add a second Jellyfin server pointing to the same Fetcherr URL
+2. Set the connection **Path** to `/search`
+3. Do **not** enable Library Mode on this connection
+4. Sign in with the same Fetcherr account
+
+In Fetcherr Settings:
+- Enable **Stremio Search** globally and ensure the user account has search enabled
+- Enable **Media Source Selection** — required for search playback to work; without it Infuse will show "Unexpected Server Response" when attempting to play search results
 
 Search results can always include synced Fetcherr library items. When Stremio search is enabled, results can also include Cinemeta, Trakt, or configured add-on catalogs such as AIOStreams. Fetcherr uses TMDB metadata for local catalog entries and search-result details.
 
