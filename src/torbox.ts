@@ -503,18 +503,22 @@ export function markPlaybackStarted(downloadUrl: string): () => void {
   }
 }
 
-export function trackDirectTorBoxUrl(url: string): void {
-  if (!torBoxCleanupEnabled()) return
+export function torBoxRequestdlTorrentId(url: string): number | null {
   try {
     const parsed = new URL(url)
-    if (parsed.hostname !== 'api.torbox.app') return
-    if (!parsed.pathname.includes('/torrents/requestdl')) return
+    if (parsed.hostname !== 'api.torbox.app') return null
+    if (!parsed.pathname.includes('/torrents/requestdl')) return null
     const torrentId = Number.parseInt(parsed.searchParams.get('torrent_id') ?? '', 10)
-    if (!Number.isFinite(torrentId) || torrentId <= 0) return
-    trackDownloadUrl(url, torrentId)
+    return Number.isFinite(torrentId) && torrentId > 0 ? torrentId : null
   } catch {
-    // not a TorBox requestdl URL
+    return null
   }
+}
+
+export function trackDirectTorBoxUrl(url: string): void {
+  if (!torBoxCleanupEnabled()) return
+  const torrentId = torBoxRequestdlTorrentId(url)
+  if (torrentId != null) trackDownloadUrl(url, torrentId)
 }
 
 export function touchDownloadUrl(downloadUrl: string): void {

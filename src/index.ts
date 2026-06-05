@@ -17,6 +17,7 @@ import {
   rehydrateTorBoxCleanupJobs,
   touchDownloadUrl as touchTorBoxDownloadUrl,
   trackDirectTorBoxUrl,
+  torBoxRequestdlTorrentId,
 } from './torbox.js'
 import { getShowByImdbId, getMovieByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, isEpisodeVisibleToLibrary, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
@@ -658,8 +659,14 @@ async function maybeResolveDirectPlaybackCandidate(
     }
   }
 
+  const tbTorrentId = torBoxRequestdlTorrentId(stream.url)
+  if (tbTorrentId != null) {
+    trackDirectTorBoxUrl(stream.url)
+    app.log.info(`play: direct TorBox requestdl stream for ${label} → torrent ${tbTorrentId}`)
+    return { url: stream.url, filename: directFilename, provider: 'TorBox' }
+  }
+
   const resolvedUrl = await resolveDirectPlaybackUrl(stream.url)
-  trackDirectTorBoxUrl(stream.url)
   app.log.info(
     `play: direct HTTP stream selected for ${label} from ${directUrlHost(resolvedUrl)}` +
     (directFilename ? ` → ${directFilename}` : '')
@@ -831,8 +838,14 @@ async function resolvePlayableStream(
             }
           }
 
+          const tbTorrentIdDirect = torBoxRequestdlTorrentId(stream.url)
+          if (tbTorrentIdDirect != null) {
+            trackDirectTorBoxUrl(stream.url)
+            app.log.info(`play: direct TorBox requestdl stream for ${label} → torrent ${tbTorrentIdDirect}`)
+            clearFailedPlay(cacheKey)
+            return { url: stream.url, filename: directFilename, provider: 'TorBox' }
+          }
           const resolvedUrl = await resolveDirectPlaybackUrl(stream.url)
-          trackDirectTorBoxUrl(stream.url)
           app.log.info(`play: direct stream selected for ${label} from ${directUrlHost(resolvedUrl)}${directFilename ? ` → ${directFilename}` : ''}`)
           clearFailedPlay(cacheKey)
           return { url: resolvedUrl, filename: directFilename }
