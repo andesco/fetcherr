@@ -2848,6 +2848,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const tmdbId = idToTmdb(id)
     if (!tmdbId) return reply.code(404).send({ error: 'Not found' })
     if (isLibraryItemHidden('movie', tmdbId)) return reply.code(404).send({ error: 'Not found' })
+    if (!hasAnySourceItem('movie', tmdbId)) return reply.code(404).send({ error: 'Not found' })
     const movie = getMovieByTmdbId(tmdbId) ?? await fetchMovieByTmdbId(tmdbId)
     if (!movie) return reply.code(404).send({ error: 'Not found' })
     if (!canUserAccessMovie(currentUser, movie)) return reply.code(404).send({ error: 'Not found' })
