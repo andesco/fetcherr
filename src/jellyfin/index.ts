@@ -1737,7 +1737,21 @@ function findNextUpEpisode(show: Show, playedIds: Set<string>, resumeIds: Set<st
 function seasonToItem(season: Season, show: Show, userId = DEFAULT_ADMIN_USER_ID) {
   const seriesId = showTmdbToId(show.tmdbId)
   const id = seasonToId(show.tmdbId, season.seasonNumber)
-  const ud = getUserData(id, userId)
+  let ud = getUserData(id, userId)
+  if (!ud.played) {
+    const airedEps = getAiredEpisodesForSeason(show.tmdbId, season.seasonNumber)
+    if (airedEps.length > 0) {
+      let allPlayed = true
+      let latestDate = ''
+      for (const ep of airedEps) {
+        const epId = episodeToId(show.tmdbId, ep.seasonNumber, ep.episodeNumber)
+        const epUd = getUserData(epId, userId)
+        if (!epUd.played) { allPlayed = false; break }
+        if (epUd.lastPlayedDate > latestDate) latestDate = epUd.lastPlayedDate
+      }
+      if (allPlayed) ud = { played: true, playCount: 1, positionTicks: 0, lastPlayedDate: latestDate }
+    }
+  }
   return {
     Id:                 id,
     ServerId:           SERVER_GUID,
@@ -3209,6 +3223,12 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const user = requireRequestUser(req.headers, reply)
     if (!user) return
     app.log.info('watched: marking played ' + itemId + ' for user ' + user.id)
+    const seasonRef = idToSeason(itemId)
+    if (seasonRef) {
+      for (const ep of getEpisodesForSeason(seasonRef.showTmdbId, seasonRef.seasonNum)) {
+        markPlayed(episodeToId(seasonRef.showTmdbId, ep.seasonNumber, ep.episodeNumber), user.id)
+      }
+    }
     markPlayed(itemId, user.id)
     const ud = getUserData(itemId, user.id)
     return { PlayCount: ud.playCount, Played: ud.played, LastPlayedDate: ud.lastPlayedDate || undefined }
@@ -3219,6 +3239,12 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const user = requireRequestUser(req.headers, reply)
     if (!user) return
     app.log.info('watched: marking unplayed ' + itemId + ' for user ' + user.id)
+    const seasonRef = idToSeason(itemId)
+    if (seasonRef) {
+      for (const ep of getEpisodesForSeason(seasonRef.showTmdbId, seasonRef.seasonNum)) {
+        markUnplayed(episodeToId(seasonRef.showTmdbId, ep.seasonNumber, ep.episodeNumber), user.id)
+      }
+    }
     markUnplayed(itemId, user.id)
     return {}
   }
