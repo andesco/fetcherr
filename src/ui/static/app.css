@@ -1388,8 +1388,18 @@ label {
   justify-content: center;
   padding: 60px 20px 20px;
   background: rgba(4, 8, 16, .72);
+}
+
+/* backdrop-filter on ::before avoids creating a containing block that traps
+   position:fixed descendants (tv-add-menu dropdown) and shifts their coords */
+.modal-overlay::before,
+.modal-backdrop::before {
+  content: '';
+  position: fixed;
+  inset: 0;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+  pointer-events: none;
 }
 
 .modal-backdrop {
