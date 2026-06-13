@@ -411,7 +411,7 @@ function clientCompatibilityPenalty(_s: Stream, _clientName = ''): number {
 }
 
 function playableStreamsInProviderOrder(streams: Stream[], ctx: StreamRankContext = {}): Stream[] {
-  const usable = streams.filter(hasUsableUrl).filter(s => !isNotWebReadyDirectStream(s))
+  const usable = streams.filter(hasUsableUrl).filter(s => !isNotWebReadyDirectStream(s) || config.allowNotWebReadyDirectStreams)
   const preferred = usable.filter(s => !isLikelyBadStream(s))
   const basePool = preferred.length ? preferred : usable
   return validYears(ctx).length
