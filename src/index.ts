@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import { parseTorrentTitle, type ParsedResult as ParsedTorrentTitleResult } from '@viren070/parse-torrent-title'
 import { randomBytes } from 'node:crypto'
-import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseStremioSearchSource } from './config.js'
+import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseStremioSearchSource } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -92,10 +92,10 @@ getDb()
   if (s.traktWatchlistShows != null)  config.traktWatchlistShows  = parseBooleanSetting(s.traktWatchlistShows, true)
   if (s.traktWatchHistory != null) config.traktWatchHistory = parseBooleanSetting(s.traktWatchHistory, false)
   if (s.traktCollections != null) config.traktCollections = parseBooleanSetting(s.traktCollections, false)
-  if (s.traktFolders != null) config.traktFolders = parseBooleanSetting(s.traktFolders, false)
+  if (s.traktFolders != null) config.traktFolders = parseFoldersSetting(s.traktFolders, false)
   if (s.mdblistApiKey)        config.mdblistApiKey       = s.mdblistApiKey
   if (s.mdblistLists != null) config.mdblistLists = normalizeMdblistEntries(parseMdblistLists(s.mdblistLists))
-  if (s.mdblistFolders != null) config.mdblistFolders = parseBooleanSetting(s.mdblistFolders, false)
+  if (s.mdblistFolders != null) config.mdblistFolders = parseFoldersSetting(s.mdblistFolders, false)
   if (s.showAddDefaultMode != null) config.showAddDefaultMode = parseShowAddDefaultMode(s.showAddDefaultMode)
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)

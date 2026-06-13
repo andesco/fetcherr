@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
-import { config } from '../config.js'
+import { config, type ListFoldersSetting } from '../config.js'
 import {
   listMovies, countMovies, getMovieByTmdbId,
   listUsers, getUserData, saveProgress, markPlayed, markUnplayed, listResumeItemIds, countResumeItems, getAllPlayedItemIds,
@@ -620,6 +620,28 @@ function humanizeCollectionSlug(slug: string): string {
     .filter(Boolean)
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
+}
+
+function hasFoldersSetting(setting: ListFoldersSetting): boolean {
+  if (typeof setting === 'boolean') return setting
+  return setting.length > 0
+}
+
+function isTraktListFolder(setting: ListFoldersSetting, slug: string): boolean {
+  if (typeof setting === 'boolean') return setting
+  return setting.includes(slug)
+}
+
+function isMdblistListFolder(setting: ListFoldersSetting, url: string): boolean {
+  if (typeof setting === 'boolean') return setting
+  const path = mdblistListPathFromUrl(url)
+  return setting.some(s => path === s || path.endsWith(`/${s}`))
+}
+
+function mdblistFolderUrlForId(id: string | null | undefined): string | null {
+  if (!id || !hasFoldersSetting(config.mdblistFolders)) return null
+  const url = idToMdblistListUrl(id)
+  return url && isMdblistListFolder(config.mdblistFolders, url) ? url : null
 }
 
 type CollectionMember = { mediaType: 'movie' | 'show'; tmdbId: number }
@@ -2158,14 +2180,14 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     ...(config.traktCollections
       ? [{ Name: 'Collections', CollectionType: 'boxsets', ItemId: COLLECTIONS_FOLDER_ID, Locations: ['/collections'] }]
       : []),
-    ...(config.traktFolders ? config.traktLists.map(slug => {
+    ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => {
       const name = humanizeCollectionSlug(slug.split('/').pop() ?? slug)
       return { Name: name, CollectionType: 'boxsets', ItemId: traktCollectionSlugToId(slug), Locations: [`/trakt/${slug}`] }
-    }) : []),
-    ...(config.mdblistFolders ? config.mdblistLists.map(entry => {
+    }),
+    ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), CollectionType: 'boxsets', ItemId: mdblistFolderIdFromPath(p), Locations: [`/mdblist/${p}`] }
-    }) : []),
+    }),
   ]))
   app.get('/Library/SelectableMediaFolders', async () => null)
 
@@ -2174,25 +2196,25 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
-    ...(config.traktFolders ? config.traktLists.map(slug => ({
+    ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => ({
       Name: humanizeCollectionSlug(slug.split('/').pop() ?? slug), Id: traktCollectionSlugToId(slug), Type: 'boxsets',
-    })) : []),
-    ...(config.mdblistFolders ? config.mdblistLists.map(entry => {
+    })),
+    ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
-    }) : []),
+    }),
   ]))
   app.get('/UserViews/GroupingOptions', async () => opts.searchOnly ? [] : ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
-    ...(config.traktFolders ? config.traktLists.map(slug => ({
+    ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => ({
       Name: humanizeCollectionSlug(slug.split('/').pop() ?? slug), Id: traktCollectionSlugToId(slug), Type: 'boxsets',
-    })) : []),
-    ...(config.mdblistFolders ? config.mdblistLists.map(entry => {
+    })),
+    ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
-    }) : []),
+    }),
   ]))
 
   // Views — library sections
@@ -2226,8 +2248,8 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: SHOWS_FOLDER_ID },
       },
       ...(config.traktCollections ? [traktCollectionsFolderToItem(user)] : []),
-      ...(config.traktFolders ? config.traktLists.map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)) : []),
-      ...(config.mdblistFolders ? config.mdblistLists.map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)) : []),
+      ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
+      ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
     ]
     return {
       Items: items,
@@ -2381,14 +2403,14 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
 
     if (opts.searchOnly) return emptyItems(offset)
 
-    const mdblistUrl = ParentId && config.mdblistFolders ? idToMdblistListUrl(ParentId) : null
+    const mdblistUrl = mdblistFolderUrlForId(ParentId)
     if (mdblistUrl) {
       const items = await mdblistFolderContents(mdblistUrl, user)
       return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
 
     const collectionSlug = ParentId ? idToTraktCollectionSlug(ParentId) : null
-    if (collectionSlug && (config.traktFolders || config.traktCollections)) {
+    if (collectionSlug && (isTraktListFolder(config.traktFolders, collectionSlug) || config.traktCollections)) {
       const items = await traktCollectionContents(collectionSlug, user)
       return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
@@ -2441,8 +2463,8 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
           UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: SHOWS_FOLDER_ID },
         },
         ...(config.traktCollections ? [traktCollectionsFolderToItem(user)] : []),
-        ...(config.traktFolders ? config.traktLists.map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)) : []),
-        ...(config.mdblistFolders ? config.mdblistLists.map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)) : []),
+        ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
+        ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
       ]
       return {
         Items: folders,
@@ -2724,14 +2746,14 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
 
     const collectionSlug = idToTraktCollectionSlug(id)
-    if (collectionSlug && config.traktFolders) {
+    if (collectionSlug && isTraktListFolder(config.traktFolders, collectionSlug)) {
       return buildTraktFolderItem(collectionSlug, collectionMembersForUser(currentUser, collectionSlug).length)
     }
     if (collectionSlug && config.traktCollections) {
       return traktCollectionToItem(collectionSlug, currentUser)
     }
 
-    const mdblistUrl = config.mdblistFolders ? idToMdblistListUrl(id) : null
+    const mdblistUrl = mdblistFolderUrlForId(id)
     if (mdblistUrl) {
       return buildMdblistFolderItem(mdblistUrl, mdblistFolderMembers(currentUser, mdblistUrl).length)
     }
@@ -3002,11 +3024,11 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
 
     const collectionSlug = idToTraktCollectionSlug(id)
-    if (collectionSlug && (config.traktCollections || config.traktFolders)) {
+    if (collectionSlug && (config.traktCollections || isTraktListFolder(config.traktFolders, collectionSlug))) {
       return sendTraktCollectionImage(collectionSlug, type, query, headers, reply)
     }
 
-    const mdblistImageUrl = config.mdblistFolders ? idToMdblistListUrl(id) : null
+    const mdblistImageUrl = mdblistFolderUrlForId(id)
     if (mdblistImageUrl) {
       return sendMdblistFolderImage(mdblistImageUrl, type, query, headers, reply)
     }

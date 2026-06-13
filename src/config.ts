@@ -61,6 +61,21 @@ export function parseBooleanSetting(value: string | undefined, fallback = false)
   return fallback
 }
 
+export type ListFoldersSetting = boolean | string[]
+
+export function parseFoldersSetting(value: string | undefined, fallback: ListFoldersSetting = false): ListFoldersSetting {
+  if (value == null || value === '') return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return value.split(',').map(s => s.trim()).filter(Boolean)
+}
+
+export function serializeFoldersSetting(setting: ListFoldersSetting): string {
+  if (typeof setting === 'boolean') return setting ? 'true' : 'false'
+  return setting.join(',')
+}
+
 export type AudioLanguage =
   | 'en'
   | 'ja'
@@ -162,10 +177,10 @@ export const config = {
   traktWatchlistShows:  parseBooleanSetting(process.env.TRAKT_WATCHLIST_SHOWS, true),
   traktWatchHistory: parseBooleanSetting(process.env.TRAKT_WATCH_HISTORY, false),
   traktCollections: parseBooleanSetting(process.env.TRAKT_COLLECTIONS, false),
-  traktFolders: parseBooleanSetting(process.env.TRAKT_FOLDERS, false),
+  traktFolders: parseFoldersSetting(process.env.TRAKT_FOLDERS, false),
   mdblistApiKey: process.env.MDBLIST_API_KEY ?? '',
   mdblistLists: parseMdblistLists(process.env.MDBLIST_LISTS ?? ''),
-  mdblistFolders: parseBooleanSetting(process.env.MDBLIST_FOLDERS, false),
+  mdblistFolders: parseFoldersSetting(process.env.MDBLIST_FOLDERS, false),
   mdblistMaxItems: parsePositiveIntegerSetting(process.env.MDBLIST_MAX_ITEMS, 1000),
   showAddDefaultMode: parseShowAddDefaultMode(process.env.SHOW_ADD_DEFAULT_MODE),
   movieReleaseMode: parseMovieReleaseMode(process.env.MOVIE_RELEASE_MODE),

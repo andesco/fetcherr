@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseStremioSearchSource, parseTraktLists } from '../config.js'
+import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, serializeFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseStremioSearchSource, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistEntries } from '../mdblist.js'
@@ -905,14 +905,18 @@ export async function uiRoutes(app: FastifyInstance) {
       config.traktCollections = enabled
     }
     if (body.traktFolders != null) {
-      const enabled = parseBooleanSetting(String(body.traktFolders), false)
-      setSetting('traktFolders', enabled ? 'true' : 'false')
-      config.traktFolders = enabled
+      const setting = Array.isArray(body.traktFolders)
+        ? (body.traktFolders as unknown[]).map(v => String(v).trim()).filter(Boolean)
+        : parseFoldersSetting(String(body.traktFolders), false)
+      setSetting('traktFolders', serializeFoldersSetting(setting))
+      config.traktFolders = setting
     }
     if (body.mdblistFolders != null) {
-      const enabled = parseBooleanSetting(String(body.mdblistFolders), false)
-      setSetting('mdblistFolders', enabled ? 'true' : 'false')
-      config.mdblistFolders = enabled
+      const setting = Array.isArray(body.mdblistFolders)
+        ? (body.mdblistFolders as unknown[]).map(v => String(v).trim()).filter(Boolean)
+        : parseFoldersSetting(String(body.mdblistFolders), false)
+      setSetting('mdblistFolders', serializeFoldersSetting(setting))
+      config.mdblistFolders = setting
     }
     if (typeof body.showAddDefaultMode === 'string') {
       const mode = parseShowAddDefaultMode(body.showAddDefaultMode)
