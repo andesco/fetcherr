@@ -2039,6 +2039,38 @@ label {
   margin-top: 8px;
 }
 
+.folder-toggle {
+  display: none;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s, border-color .15s, color .15s;
+}
+
+.folder-toggle:hover {
+  border-color: var(--accent-border);
+  color: var(--text);
+}
+
+.folder-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-dim);
+}
+
+.checklist.folder-mode .folder-toggle,
+.mdblist-row .folder-toggle {
+  display: inline-flex;
+}
+
 .trakt-list-actions {
   margin-top: 12px;
 }
