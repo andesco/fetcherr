@@ -1308,104 +1308,6 @@ function normalizedCodecLabel(text: string): string | undefined {
   return undefined
 }
 
-type StreamResolutionBucket = '2160p' | '1080p' | '720p' | '480p' | 'unknown'
-type StreamCodecBucket = 'h265' | 'h264' | 'av1' | 'other'
-type StreamVarietyKey = `${StreamResolutionBucket}:${StreamCodecBucket}`
-
-const STREAM_VARIETY_KEY_PRIORITY: StreamVarietyKey[] = [
-  '2160p:h265',
-  '2160p:h264',
-  '1080p:h265',
-  '1080p:h264',
-  '2160p:av1',
-  '1080p:av1',
-  '2160p:other',
-  '1080p:other',
-  '720p:h265',
-  '720p:h264',
-  '720p:av1',
-  '720p:other',
-  '480p:h265',
-  '480p:h264',
-  '480p:av1',
-  '480p:other',
-  'unknown:h265',
-  'unknown:h264',
-  'unknown:av1',
-  'unknown:other',
-]
-
-function streamResolutionBucket(stream: Stream): StreamResolutionBucket {
-  const text = streamMetadataText(stream)
-  if (/\b(2160p|4k|uhd)\b/i.test(text)) return '2160p'
-  if (/\b1080p\b/i.test(text)) return '1080p'
-  if (/\b720p\b/i.test(text)) return '720p'
-  if (/\b480p\b/i.test(text)) return '480p'
-  return 'unknown'
-}
-
-function streamCodecBucket(stream: Stream): StreamCodecBucket {
-  const text = streamMetadataText(stream)
-  if (/\bhevc\b|h\.?265\b|x265\b/i.test(text)) return 'h265'
-  if (/\bh\.?264\b|x264\b|avc\b/i.test(text)) return 'h264'
-  if (/\bav1\b/i.test(text)) return 'av1'
-  return 'other'
-}
-
-function streamVarietyKey(stream: Stream): StreamVarietyKey {
-  return `${streamResolutionBucket(stream)}:${streamCodecBucket(stream)}`
-}
-
-function selectPlaybackMediaSourceStreams(streams: Stream[], limit: number): Stream[] {
-  if (limit <= 0) return []
-  if (streams.length <= limit) return streams
-
-  const buckets = new Map<StreamVarietyKey, Stream[]>()
-  const firstSeenKeys: StreamVarietyKey[] = []
-  for (const stream of streams) {
-    const key = streamVarietyKey(stream)
-    const bucket = buckets.get(key)
-    if (bucket) {
-      bucket.push(stream)
-    } else {
-      buckets.set(key, [stream])
-      firstSeenKeys.push(key)
-    }
-  }
-
-  const priorityKeys = [
-    ...STREAM_VARIETY_KEY_PRIORITY.filter(key => buckets.has(key)),
-    ...firstSeenKeys.filter(key => !STREAM_VARIETY_KEY_PRIORITY.includes(key)),
-  ]
-  const selected: Stream[] = []
-  const selectedStreams = new Set<Stream>()
-
-  while (selected.length < limit) {
-    let addedInRound = false
-    for (const key of priorityKeys) {
-      const bucket = buckets.get(key)
-      const stream = bucket?.shift()
-      if (!stream || selectedStreams.has(stream)) continue
-      selected.push(stream)
-      selectedStreams.add(stream)
-      addedInRound = true
-      if (selected.length >= limit) break
-    }
-    if (!addedInRound) break
-  }
-
-  if (selected.length < limit) {
-    for (const stream of streams) {
-      if (selectedStreams.has(stream)) continue
-      selected.push(stream)
-      selectedStreams.add(stream)
-      if (selected.length >= limit) break
-    }
-  }
-
-  return selected
-}
-
 function streamBitrateSortValue(stream: Stream, runtimeTicks: number): number {
   return streamBitrate(streamSizeBytes(stream), runtimeTicks) ?? 0
 }
@@ -1586,7 +1488,7 @@ async function buildPlaybackMediaSources(input: {
   try {
     const { streams, label, fileHint } = await playbackStreamsForPath(input.playPath, input.playbackClient, false)
     const qualityRanked = streams.filter(stream => (stream.url || extractHashFromStream(stream)) && streamEligibleForMediaSourceSelection(stream))
-    const usable = selectPlaybackMediaSourceStreams(qualityRanked, config.mediaSourceLimit)
+    const usable = qualityRanked.slice(0, config.mediaSourceLimit)
 
     if (!usable.length) return [fallbackSource]
 
