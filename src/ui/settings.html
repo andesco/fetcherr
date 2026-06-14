@@ -115,6 +115,7 @@
     <div class="field" id="mediaSourceLimitField" hidden>
       <label for="mediaSourceLimit">Sources Offered</label>
       <select id="mediaSourceLimit">
+        <option value="20">20 sources</option>
         <option value="10">10 sources</option>
         <option value="5">5 sources</option>
       </select>
@@ -902,7 +903,7 @@
     document.getElementById('stremioSearchEnabled').checked = d.stremioSearchEnabled === true
     document.getElementById('stremioSearchSource').value = d.stremioSearchSource || 'cinemeta'
     syncStremioSearchSourceVisibility()
-    document.getElementById('mediaSourceLimit').value = String(d.mediaSourceLimit === 5 ? 5 : 10)
+    document.getElementById('mediaSourceLimit').value = String([5, 10, 20].includes(d.mediaSourceLimit) ? d.mediaSourceLimit : 10)
     syncMediaSourceLimitVisibility()
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
     setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
