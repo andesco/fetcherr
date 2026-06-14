@@ -387,13 +387,13 @@ function sourceScore(s: Stream): number {
   return 2
 }
 
-// Codec quality score — higher is better. Playback compatibility is handled
-// later by resolving and probing the selected candidate before returning it.
+// Prefer broadly supported HEVC and H.264 playback over AV1. AV1 remains
+// preferable to unknown codecs, but is not consistently supported by clients.
 function codecScore(s: Stream): number {
   const text = streamText(s)
-  if (/\bav1\b/.test(text))                      return 4
-  if (/\bhevc\b|h\.?265\b|x265\b/.test(text))   return 3
-  if (/\bh\.?264\b|x264\b|avc\b/.test(text))    return 2
+  if (/\bhevc\b|h\.?265\b|x265\b/.test(text))   return 4
+  if (/\bh\.?264\b|x264\b|avc\b/.test(text))    return 3
+  if (/\bav1\b/.test(text))                      return 2
   if (/\bxvid\b|\bdivx\b/.test(text))            return 0
   return 1
 }
