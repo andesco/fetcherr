@@ -99,14 +99,16 @@ export function parseStremioSearchSource(value: string | undefined): StremioSear
   if (value === 'addon' || value === 'trakt') return value
   return 'cinemeta'
 }
-export type MediaSourceLimit = 5 | 10
+export type MediaSourceLimit = 5 | 10 | 20
 
 export function parseStreamRankingMode(value: string | undefined): StreamRankingMode {
   return value === 'provider' ? 'provider' : 'fetcherr'
 }
 
 export function parseMediaSourceLimit(value: string | undefined): MediaSourceLimit {
-  return value === '5' ? 5 : 10
+  if (value === '5') return 5
+  if (value === '20') return 20
+  return 10
 }
 
 export type ShowAddDefaultMode = 'all' | 'latest'
