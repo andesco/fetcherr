@@ -106,24 +106,29 @@ getDb()
   if (s.stremioSearchSource != null) config.stremioSearchSource = parseStremioSearchSource(s.stremioSearchSource)
   if (s.mediaSourceSelection != null) config.mediaSourceSelection = parseBooleanSetting(s.mediaSourceSelection, false)
   if (s.mediaSourceLimit != null) config.mediaSourceLimit = parseMediaSourceLimit(s.mediaSourceLimit)
+  // Only fall back to env-var URLs if user has never saved add-ons via the UI.
+  // Once s.streamProviderUrls is set (even to ''), DB is authoritative and env var
+  // should not re-add URLs the user explicitly removed.
+  const envProviderUrls = s.streamProviderUrls == null ? config.streamProviderUrls.join('\n') : '' 
   const bothConfigured = Boolean(config.rdApiKey && config.torBoxApiKey)
   if (bothConfigured) {
     config.streamProviderUrls = collectStreamProviderUrls(
       s.rdStreamProviderUrls ?? '',
       s.torBoxStreamProviderUrls ?? '',
       s.streamProviderUrls ?? '',
+      envProviderUrls,
     )
   } else if (config.torBoxApiKey) {
     config.streamProviderUrls = collectStreamProviderUrls(
       s.torBoxStreamProviderUrls ?? '',
       s.streamProviderUrls ?? '',
-      config.streamProviderUrls.join('\n'),
+      envProviderUrls,
     )
   } else {
     config.streamProviderUrls = collectStreamProviderUrls(
       s.rdStreamProviderUrls ?? '',
       s.streamProviderUrls ?? '',
-      config.streamProviderUrls.join('\n'),
+      envProviderUrls,
     )
   }
   config.stremioSearchProviderUrls = collectStreamProviderUrls(
