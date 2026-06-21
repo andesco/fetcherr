@@ -7,7 +7,7 @@ import {
   listMovies, countMovies, getMovieByTmdbId,
   listUsers, getUserData, saveProgress, markPlayed, markUnplayed, listResumeItemIds, countResumeItems, getAllPlayedItemIds,
   getEffectiveShowMode, listShows, countShows, getShowByTmdbId,
-  getSeasonsForShow, getSeason, getEpisodesForSeason, getAiredEpisodesForSeason, isMovieVisibleToLibrary, isEpisodeVisibleToLibrary, hasAnySourceItem,
+  getSeasonsForShow, getSeason, getEpisodesForSeason, getAiredEpisodesForSeason, getFirstAiredEpisodeForShow, isMovieVisibleToLibrary, isEpisodeVisibleToLibrary, hasAnySourceItem,
   authEnabled, canUserAccessKnownRating, canUserAccessMovie, canUserAccessShow, getDb, getUserById, getUserByUsername, hasRatingLimit, verifyUserCredentials, DEFAULT_ADMIN_USER_ID, isLibraryItemHidden, listSourceItems, type AppUser,
 } from '../db.js'
 import {
@@ -2639,9 +2639,15 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (opts.searchOnly) return []
 
     if (parentId === SHOWS_FOLDER_ID) {
-      return filterShowsForUser(user, listShows({ sortBy: 'popularity', sortOrder: 'DESC', limit: lim, userId: user.id, ...API_LIBRARY_FILTER })).map(show => showToSeriesItem(show, user.id))
+      const shows = filterShowsForUser(user, listShows({ sortBy: 'dateadded', sortOrder: 'DESC', limit: lim, userId: user.id, ...API_LIBRARY_FILTER }))
+      const items: Record<string, unknown>[] = []
+      for (const show of shows) {
+        const ep = getFirstAiredEpisodeForShow(show.tmdbId)
+        if (ep) items.push({ ...episodeToItem(ep, show, user.id), DateCreated: show.syncedAt })
+      }
+      return items
     }
-    return filterMoviesForUser(user, listMovies({ sortBy: 'popularity', sortOrder: 'DESC', limit: lim, userId: user.id, ...API_LIBRARY_FILTER })).map(movie => movieToItem(movie, user.id))
+    return filterMoviesForUser(user, listMovies({ sortBy: 'dateadded', sortOrder: 'DESC', limit: lim, userId: user.id, ...API_LIBRARY_FILTER })).map(movie => movieToItem(movie, user.id))
   })
 
   // Single item — /Items/:id and /Users/:userId/Items/:itemId

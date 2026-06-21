@@ -1255,6 +1255,15 @@ export function getAiredEpisodesForSeason(showTmdbId: number, seasonNumber: numb
   ).all(showTmdbId, seasonNumber, today) as Record<string, unknown>[]).map(row2episode)
 }
 
+export function getFirstAiredEpisodeForShow(showTmdbId: number): Episode | null {
+  const today = todayIsoDate()
+  const r = getDb().prepare(
+    `SELECT * FROM episodes WHERE show_tmdb_id = ? AND season_number > 0 AND air_date != '' AND air_date < ?
+     ORDER BY season_number ASC, episode_number ASC LIMIT 1`
+  ).get(showTmdbId, today)
+  return r ? row2episode(r as Record<string, unknown>) : null
+}
+
 export function getEpisodesForShow(showTmdbId: number): Episode[] {
   return (getDb().prepare(
     `SELECT * FROM episodes WHERE show_tmdb_id = ? ORDER BY season_number ASC, episode_number ASC`
