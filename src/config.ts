@@ -27,6 +27,7 @@ export function parseTraktLists(value: string): string[] {
 export interface MdblistListEntry {
   url: string
   name?: string
+  maxItems?: number
 }
 
 export function parseMdblistLists(value: string): MdblistListEntry[] {
@@ -41,6 +42,7 @@ export function parseMdblistLists(value: string): MdblistListEntry[] {
           .map(e => ({
             url: String(e.url).trim(),
             ...(e.name && String(e.name).trim() ? { name: String(e.name).trim() } : {}),
+            ...(Number.isFinite(Number(e.maxItems)) && Number(e.maxItems) > 0 ? { maxItems: Math.trunc(Number(e.maxItems)) } : {}),
           }))
           .filter(e => e.url)
       }

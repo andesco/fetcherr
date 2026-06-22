@@ -945,8 +945,15 @@ export async function uiRoutes(app: FastifyInstance) {
     if (Array.isArray(body.mdblistLists)) {
       try {
         const raw = (body.mdblistLists as unknown[])
-          .filter((v): v is { url: string; name?: string } => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
-          .map(v => ({ url: v.url.trim(), ...(v.name?.trim() ? { name: v.name.trim() } : {}) }))
+          .filter((v): v is { url: string; name?: string; maxItems?: unknown } => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
+          .map(v => {
+            const maxItems = Number(v.maxItems)
+            return {
+              url: v.url.trim(),
+              ...(v.name?.trim() ? { name: v.name.trim() } : {}),
+              ...(Number.isFinite(maxItems) && maxItems > 0 ? { maxItems: Math.trunc(maxItems) } : {}),
+            }
+          })
         const entries = normalizeMdblistEntries(raw)
         setSetting('mdblistLists', JSON.stringify(entries))
         config.mdblistLists = entries
