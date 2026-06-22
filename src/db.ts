@@ -319,6 +319,7 @@ CREATE TABLE IF NOT EXISTS source_items (
   source_key TEXT    NOT NULL,
   media_type TEXT    NOT NULL CHECK (media_type IN ('movie', 'show')),
   tmdb_id    INTEGER NOT NULL,
+  source_position INTEGER NOT NULL DEFAULT 0,
   synced_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
   PRIMARY KEY (source_key, media_type, tmdb_id)
 );
@@ -485,6 +486,7 @@ export function getDb(): Database.Database {
     try { _db.exec(`ALTER TABLE user_item_data ADD COLUMN trakt_last_watched_at TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_id TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_resolved_at TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE source_items ADD COLUMN source_position INTEGER NOT NULL DEFAULT 0`) } catch { /* already exists */ }
     try { _db.exec(`CREATE TABLE IF NOT EXISTS torbox_cleanup_jobs (
       download_url TEXT PRIMARY KEY,
       torrent_id   INTEGER NOT NULL,
@@ -1985,14 +1987,14 @@ export function listSourceKeys(prefix?: string): string[] {
   return (rows as { source_key: string }[]).map(r => r.source_key)
 }
 
-export function listSourceItems(sourceKey: string): Array<{ mediaType: MediaType; tmdbId: number }> {
+export function listSourceItems(sourceKey: string): Array<{ mediaType: MediaType; tmdbId: number; sourcePosition: number; syncedAt: string }> {
   const rows = getDb().prepare(`
-    SELECT media_type, tmdb_id
+    SELECT media_type, tmdb_id, source_position, synced_at
     FROM source_items
     WHERE source_key = ?
-    ORDER BY media_type ASC, tmdb_id ASC
-  `).all(sourceKey) as Array<{ media_type: MediaType; tmdb_id: number }>
-  return rows.map(row => ({ mediaType: row.media_type, tmdbId: row.tmdb_id }))
+    ORDER BY source_position ASC, media_type ASC, tmdb_id ASC
+  `).all(sourceKey) as Array<{ media_type: MediaType; tmdb_id: number; source_position: number; synced_at: string }>
+  return rows.map(row => ({ mediaType: row.media_type, tmdbId: row.tmdb_id, sourcePosition: row.source_position, syncedAt: row.synced_at }))
 }
 
 export function listSourceKeysForItem(mediaType: MediaType, tmdbId: number): string[] {
@@ -2070,8 +2072,22 @@ export function replaceSourceItems(
   mediaType: MediaType,
   tmdbIds: number[],
 ): number[] {
+  return replaceSourceItemsWithPositions(sourceKey, mediaType, tmdbIds.map((tmdbId, idx) => ({ tmdbId, sourcePosition: idx + 1 })))
+}
+
+export function replaceSourceItemsWithPositions(
+  sourceKey: string,
+  mediaType: MediaType,
+  items: Array<{ tmdbId: number; sourcePosition?: number }>,
+): number[] {
   const db = getDb()
-  const ids = uniqTmdbIds(tmdbIds)
+  const byId = new Map<number, number>()
+  for (const item of items) {
+    if (!Number.isFinite(item.tmdbId) || item.tmdbId <= 0 || byId.has(item.tmdbId)) continue
+    const sourcePosition = Number.isFinite(item.sourcePosition) && (item.sourcePosition ?? 0) > 0 ? Math.trunc(item.sourcePosition ?? 0) : byId.size + 1
+    byId.set(item.tmdbId, sourcePosition)
+  }
+  const ids = [...byId.keys()]
   const current = (db.prepare(
     `SELECT tmdb_id FROM source_items WHERE source_key = ? AND media_type = ?`
   ).all(sourceKey, mediaType) as { tmdb_id: number }[]).map(r => r.tmdb_id)
@@ -2080,14 +2096,15 @@ export function replaceSourceItems(
   const removed = current.filter(id => !nextSet.has(id))
 
   const insertStmt = db.prepare(`
-    INSERT INTO source_items (source_key, media_type, tmdb_id, synced_at)
-    VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    INSERT INTO source_items (source_key, media_type, tmdb_id, source_position, synced_at)
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     ON CONFLICT(source_key, media_type, tmdb_id) DO UPDATE SET
+      source_position = excluded.source_position,
       synced_at = excluded.synced_at
   `)
 
   db.transaction(() => {
-    for (const id of ids) insertStmt.run(sourceKey, mediaType, id)
+    for (const id of ids) insertStmt.run(sourceKey, mediaType, id, byId.get(id) ?? 0)
 
     if (!ids.length) {
       db.prepare(`DELETE FROM source_items WHERE source_key = ? AND media_type = ?`).run(sourceKey, mediaType)
