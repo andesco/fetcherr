@@ -1414,6 +1414,8 @@ label {
 
 .modal,
 .detail-modal {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-height: calc(100dvh - 100px);
   overflow: hidden;
@@ -1434,7 +1436,6 @@ label {
 }
 
 .detail-modal {
-  position: relative;
   max-width: 820px;
   display: flex;
   flex-direction: column;
