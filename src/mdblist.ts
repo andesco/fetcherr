@@ -6,6 +6,7 @@ import {
   pruneOrphanedShows,
   removeSourceKey,
   replaceSourceItemsWithPositions,
+  setSourceKeyLibraryInclusion,
   upsertManualShowSubscription,
   type MediaType,
 } from './db.js'
@@ -100,6 +101,7 @@ export function normalizeMdblistEntries(entries: MdblistListEntry[]): MdblistLis
           url,
           ...(entry.name?.trim() ? { name: entry.name.trim() } : {}),
           ...(Number.isFinite(Number(entry.maxItems)) && Number(entry.maxItems) > 0 ? { maxItems: Math.trunc(Number(entry.maxItems)) } : {}),
+          ...(entry.library === false ? { library: false } : {}),
         })
       }
     } catch { /* skip invalid URLs */ }
@@ -113,8 +115,15 @@ export function mdblistListPathFromUrl(listUrl: string): string {
   return parsed.pathname.slice('/lists/'.length).replace(/\/+$/, '')
 }
 
-function mdblistListSource(listUrl: string): string {
+export function mdblistListSource(listUrl: string): string {
   return `${MDBLIST_SOURCE_PREFIX}${mdblistListPathFromUrl(listUrl)}`
+}
+
+export function applyMdblistLibrarySettings(entries: MdblistListEntry[]): number {
+  return entries.reduce(
+    (updated, entry) => updated + setSourceKeyLibraryInclusion(mdblistListSource(entry.url), entry.library !== false),
+    0,
+  )
 }
 
 export function cleanupRemovedMdblistListSources(activeListUrls: string[]): {
@@ -359,6 +368,7 @@ export async function syncMdblistList(listUrl: string): Promise<MdblistListSyncR
 
   console.log(`mdblist: syncing ${normalizedUrl}`)
   const configuredEntry = config.mdblistLists.find(entry => normalizeMdblistListUrl(entry.url) === normalizedUrl)
+  const includeInLibrary = configuredEntry?.library !== false
   const maxItems = Math.max(1, configuredEntry?.maxItems ?? config.mdblistMaxItems)
   const { entries, capped, discoveredTotal } = await fetchMdblistEntries(normalizedUrl, maxItems)
   if (capped) {
@@ -391,8 +401,8 @@ export async function syncMdblistList(listUrl: string): Promise<MdblistListSyncR
     if (show) shows++
   }
 
-  const removedMovies = replaceSourceItemsWithPositions(sourceKey, 'movie', movieSourceItems)
-  const removedShows = replaceSourceItemsWithPositions(sourceKey, 'show', showSourceItems)
+  const removedMovies = replaceSourceItemsWithPositions(sourceKey, 'movie', movieSourceItems, includeInLibrary)
+  const removedShows = replaceSourceItemsWithPositions(sourceKey, 'show', showSourceItems, includeInLibrary)
   const prunedMovies = pruneOrphanedMovies(removedMovies)
   const prunedShows = pruneOrphanedShows(removedShows)
 

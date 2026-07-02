@@ -320,6 +320,7 @@ CREATE TABLE IF NOT EXISTS source_items (
   media_type TEXT    NOT NULL CHECK (media_type IN ('movie', 'show')),
   tmdb_id    INTEGER NOT NULL,
   source_position INTEGER NOT NULL DEFAULT 0,
+  include_in_library INTEGER NOT NULL DEFAULT 1,
   synced_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
   PRIMARY KEY (source_key, media_type, tmdb_id)
 );
@@ -487,6 +488,7 @@ export function getDb(): Database.Database {
     try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_id TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE music_meta_tracks ADD COLUMN youtube_resolved_at TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE source_items ADD COLUMN source_position INTEGER NOT NULL DEFAULT 0`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE source_items ADD COLUMN include_in_library INTEGER NOT NULL DEFAULT 1`) } catch { /* already exists */ }
     try { _db.exec(`CREATE TABLE IF NOT EXISTS torbox_cleanup_jobs (
       download_url TEXT PRIMARY KEY,
       torrent_id   INTEGER NOT NULL,
@@ -965,6 +967,7 @@ function movieAvailabilityWhere(availableOnly: boolean): string {
       FROM source_items
       WHERE source_items.media_type = 'movie'
         AND source_items.tmdb_id = movies.tmdb_id
+        AND source_items.include_in_library = 1
     )`,
     `NOT EXISTS (
       SELECT 1
@@ -1020,6 +1023,7 @@ function showAvailabilityWhere(availableOnly: boolean): string {
       FROM source_items
       WHERE source_items.media_type = 'show'
         AND source_items.tmdb_id = shows.tmdb_id
+        AND source_items.include_in_library = 1
     )`,
     `NOT EXISTS (
       SELECT 1
@@ -1914,6 +1918,24 @@ export function hasAnySourceItem(mediaType: MediaType, tmdbId: number): boolean 
   return !!row
 }
 
+export function hasAnyLibrarySourceItem(mediaType: MediaType, tmdbId: number): boolean {
+  const row = getDb().prepare(`
+    SELECT 1
+    FROM source_items
+    WHERE media_type = ? AND tmdb_id = ? AND include_in_library = 1
+    LIMIT 1
+  `).get(mediaType, tmdbId)
+  return !!row
+}
+
+export function setSourceKeyLibraryInclusion(sourceKey: string, includeInLibrary: boolean): number {
+  return getDb().prepare(`
+    UPDATE source_items
+    SET include_in_library = ?
+    WHERE source_key = ?
+  `).run(includeInLibrary ? 1 : 0, sourceKey).changes
+}
+
 export function isLibraryItemHidden(mediaType: MediaType, tmdbId: number): boolean {
   const row = getDb().prepare(`
     SELECT 1
@@ -2070,6 +2092,7 @@ export function replaceSourceItemsWithPositions(
   sourceKey: string,
   mediaType: MediaType,
   items: Array<{ tmdbId: number; sourcePosition?: number }>,
+  includeInLibrary = true,
 ): number[] {
   const db = getDb()
   const byId = new Map<number, number>()
@@ -2087,15 +2110,16 @@ export function replaceSourceItemsWithPositions(
   const removed = current.filter(id => !nextSet.has(id))
 
   const insertStmt = db.prepare(`
-    INSERT INTO source_items (source_key, media_type, tmdb_id, source_position, synced_at)
-    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    INSERT INTO source_items (source_key, media_type, tmdb_id, source_position, include_in_library, synced_at)
+    VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     ON CONFLICT(source_key, media_type, tmdb_id) DO UPDATE SET
       source_position = excluded.source_position,
+      include_in_library = excluded.include_in_library,
       synced_at = excluded.synced_at
   `)
 
   db.transaction(() => {
-    for (const id of ids) insertStmt.run(sourceKey, mediaType, id, byId.get(id) ?? 0)
+    for (const id of ids) insertStmt.run(sourceKey, mediaType, id, byId.get(id) ?? 0, includeInLibrary ? 1 : 0)
 
     if (!ids.length) {
       db.prepare(`DELETE FROM source_items WHERE source_key = ? AND media_type = ?`).run(sourceKey, mediaType)

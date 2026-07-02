@@ -28,6 +28,8 @@ export interface MdblistListEntry {
   url: string
   name?: string
   maxItems?: number
+  /** Whether this list contributes items to the main Movies/Shows library. Defaults to true. */
+  library?: boolean
 }
 
 export function parseMdblistLists(value: string): MdblistListEntry[] {
@@ -43,6 +45,7 @@ export function parseMdblistLists(value: string): MdblistListEntry[] {
             url: String(e.url).trim(),
             ...(e.name && String(e.name).trim() ? { name: String(e.name).trim() } : {}),
             ...(Number.isFinite(Number(e.maxItems)) && Number(e.maxItems) > 0 ? { maxItems: Math.trunc(Number(e.maxItems)) } : {}),
+            ...(e.library === false ? { library: false } : {}),
           }))
           .filter(e => e.url)
       }

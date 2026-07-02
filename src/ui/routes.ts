@@ -7,7 +7,7 @@ import {
   addSourceItem, getEffectiveShowMode, getMovieByTmdbId, getShowByTmdbId, getSetting,
   getLatestSeasonNumberForShow, getEpisodesForShow, getMovieEligibleDate, getMovieReleaseModeForLibrary,
   getManualMovieAvailabilityOverride, materializeMovieReleaseModeForExistingLibrary,
-  countHiddenLibraryItems, hasAnySourceItem, hasSourceItem, hideLibraryItem, isLibraryItemHidden,
+  countHiddenLibraryItems, hasAnyLibrarySourceItem, hasAnySourceItem, hasSourceItem, hideLibraryItem, isLibraryItemHidden,
   listAiredShowTmdbIds, listHiddenLibraryItems, listManualMovieAvailabilityOverrides,
   listManualShowSubscriptionsById, listMovieReleaseModePreferences, listSourceKeysForItem, listSourceKeysForItems,
   pruneOrphanedMovies, pruneOrphanedShows, removeSourceItem, setManualMovieAvailabilityOverride,
@@ -25,7 +25,7 @@ import { config } from '../config.js'
 import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, serializeFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseStremioSearchSource, parseTraktLists } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
-import { cleanupRemovedMdblistListSources, normalizeMdblistEntries } from '../mdblist.js'
+import { applyMdblistLibrarySettings, cleanupRemovedMdblistListSources, normalizeMdblistEntries } from '../mdblist.js'
 import { getProviderFetchMetrics } from '../sootio.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -629,7 +629,8 @@ export async function uiRoutes(app: FastifyInstance) {
       const movieReleaseMode = getMovieReleaseModeForLibrary(movie.tmdbId)
       const eligibleDate = getMovieEligibleDate(movie, movieReleaseMode)
       const releaseGateOverridden = getManualMovieAvailabilityOverride(movie.tmdbId)
-      const isAvailable = isMovieVisibleToLibrary(movie)
+      const hasLibrarySource = hasAnyLibrarySourceItem('movie', movie.tmdbId)
+      const isAvailable = hasLibrarySource && isMovieVisibleToLibrary(movie)
       const releaseWindowLabel = movieReleaseMode === 'theatrical' ? 'Theatrical Release' : 'Digital Release'
       const sources = sourceSummaryForItem('movie', movie.tmdbId)
 
@@ -642,12 +643,14 @@ export async function uiRoutes(app: FastifyInstance) {
         posterUrl: movie.posterPath ? `https://image.tmdb.org/t/p/w342${movie.posterPath}` : null,
         imdbId: movie.imdbId,
         hidden: isLibraryItemHidden('movie', movie.tmdbId),
-        inLibrary: hasAnySourceItem('movie', movie.tmdbId) && !isLibraryItemHidden('movie', movie.tmdbId),
+        inLibrary: hasLibrarySource && !isLibraryItemHidden('movie', movie.tmdbId),
         manualAdded: hasSourceItem('manual:ui', 'movie', movie.tmdbId),
         listBacked: sources.listBacked,
         sourceLabels: sources.sourceLabels,
         visibleToInfuse: isAvailable,
-        libraryStatusLabel: isAvailable
+        libraryStatusLabel: !hasLibrarySource
+          ? 'List Folder Only'
+          : isAvailable
           ? (releaseGateOverridden && !isMovieAvailable(movie) ? 'In Library via Override' : 'In Library')
           : `Pending ${releaseWindowLabel}`,
         releaseGateOverridden,
@@ -660,7 +663,7 @@ export async function uiRoutes(app: FastifyInstance) {
           .filter(item => item.tmdbId !== movie.tmdbId)
           .map(item => ({
           ...item,
-          inLibrary: hasAnySourceItem('movie', item.tmdbId) && !isLibraryItemHidden('movie', item.tmdbId),
+          inLibrary: hasAnyLibrarySourceItem('movie', item.tmdbId) && !isLibraryItemHidden('movie', item.tmdbId),
         })),
       }
     }
@@ -673,7 +676,8 @@ export async function uiRoutes(app: FastifyInstance) {
     const today = todayIsoDate()
     const episodes = getEpisodesForShow(show.tmdbId)
     const hidden = isLibraryItemHidden('show', show.tmdbId)
-    const visibleToInfuse = !hidden && episodes.some(e => !!e.airDate && e.airDate < today)
+    const hasLibrarySource = hasAnyLibrarySourceItem('show', show.tmdbId)
+    const visibleToInfuse = hasLibrarySource && !hidden && episodes.some(e => !!e.airDate && e.airDate < today)
     const nextEpisode = episodes.find(e => !!e.airDate && e.airDate >= today) ?? null
     const sources = sourceSummaryForItem('show', show.tmdbId)
 
@@ -686,12 +690,12 @@ export async function uiRoutes(app: FastifyInstance) {
       posterUrl: show.posterPath ? `https://image.tmdb.org/t/p/w342${show.posterPath}` : null,
       imdbId: show.imdbId,
       hidden,
-      inLibrary: hasAnySourceItem('show', show.tmdbId) && !hidden,
+      inLibrary: hasLibrarySource && !hidden,
       manualAdded: hasSourceItem('manual:ui', 'show', show.tmdbId),
       listBacked: sources.listBacked,
       sourceLabels: sources.sourceLabels,
       visibleToInfuse,
-      libraryStatusLabel: visibleToInfuse ? 'In Library' : 'Pending First Episode',
+      libraryStatusLabel: !hasLibrarySource ? 'List Folder Only' : visibleToInfuse ? 'In Library' : 'Pending First Episode',
       nextEpisodeAirDate: nextEpisode?.airDate || null,
       nextEpisodeName: nextEpisode?.name || null,
       nextEpisodeSeasonNumber: nextEpisode?.seasonNumber ?? null,
@@ -945,18 +949,20 @@ export async function uiRoutes(app: FastifyInstance) {
     if (Array.isArray(body.mdblistLists)) {
       try {
         const raw = (body.mdblistLists as unknown[])
-          .filter((v): v is { url: string; name?: string; maxItems?: unknown } => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
+          .filter((v): v is { url: string; name?: string; maxItems?: unknown; library?: unknown } => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
           .map(v => {
             const maxItems = Number(v.maxItems)
             return {
               url: v.url.trim(),
               ...(v.name?.trim() ? { name: v.name.trim() } : {}),
               ...(Number.isFinite(maxItems) && maxItems > 0 ? { maxItems: Math.trunc(maxItems) } : {}),
+              ...(v.library === false ? { library: false } : {}),
             }
           })
         const entries = normalizeMdblistEntries(raw)
         setSetting('mdblistLists', JSON.stringify(entries))
         config.mdblistLists = entries
+        applyMdblistLibrarySettings(entries)
         cleanupRemovedMdblistListSources(entries.map(e => e.url))
       } catch (err) {
         return reply.code(400).send({ error: String(err instanceof Error ? err.message : err) })
@@ -966,6 +972,7 @@ export async function uiRoutes(app: FastifyInstance) {
         const entries = normalizeMdblistEntries(parseMdblistLists(body.mdblistLists))
         setSetting('mdblistLists', JSON.stringify(entries))
         config.mdblistLists = entries
+        applyMdblistLibrarySettings(entries)
         cleanupRemovedMdblistListSources(entries.map(e => e.url))
       } catch (err) {
         return reply.code(400).send({ error: String(err instanceof Error ? err.message : err) })
@@ -1032,7 +1039,7 @@ export async function uiRoutes(app: FastifyInstance) {
       const year      = ((type === 'tv' ? r.first_air_date : r.release_date) as string ?? '').slice(0, 4)
       const poster    = r.poster_path ? `https://image.tmdb.org/t/p/w185${r.poster_path}` : null
       const mediaType = type === 'movie' ? 'movie' : 'show'
-      const inLibrary = hasAnySourceItem(mediaType, tmdbId) && !isLibraryItemHidden(mediaType, tmdbId)
+      const inLibrary = hasAnyLibrarySourceItem(mediaType, tmdbId) && !isLibraryItemHidden(mediaType, tmdbId)
       return { tmdbId, title, year, poster, inLibrary, type }
     })
 
