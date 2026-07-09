@@ -737,6 +737,13 @@ export interface ListOpts {
   offset?:    number
   availableOnly?: boolean
   userId?: string
+  excludeSourceKeys?: string[]
+}
+
+function browseOnlyClause(mediaType: 'movie' | 'show', tableName: string, keys: string[]): string {
+  if (!keys.length) return ''
+  const placeholders = keys.map(() => '?').join(', ')
+  return ` AND EXISTS (SELECT 1 FROM source_items si WHERE si.tmdb_id = ${tableName}.tmdb_id AND si.media_type = '${mediaType}' AND si.source_key NOT IN (${placeholders}))`
 }
 
 export function todayIsoDate(): string {
@@ -1040,20 +1047,21 @@ function showAvailabilityWhere(availableOnly: boolean): string {
 }
 
 export function listMovies(opts: ListOpts = {}): Movie[] {
-  const { search, sortBy, sortOrder, limit = 50, offset = 0, availableOnly = false, userId = DEFAULT_ADMIN_USER_ID } = opts
+  const { search, sortBy, sortOrder, limit = 50, offset = 0, availableOnly = false, userId = DEFAULT_ADMIN_USER_ID, excludeSourceKeys = [] } = opts
 
   const sortSpec = movieSortSpec(sortBy, userId)
   const orderClause = sortSpec.directional ? `${sortSpec.expr} ${sortDirection(sortOrder)}` : sortSpec.expr
   const baseWhere = movieAvailabilityWhere(availableOnly)
+  const excludeClause = browseOnlyClause('movie', 'movies', excludeSourceKeys)
 
   if (search) {
     return (getDb().prepare(
-      `SELECT * FROM movies ${baseWhere}${baseWhere ? ' AND' : ' WHERE'} title LIKE ? ORDER BY ${orderClause} LIMIT ? OFFSET ?`
-    ).all(`%${search}%`, limit, offset) as Record<string, unknown>[]).map(row2movie)
+      `SELECT * FROM movies ${baseWhere}${baseWhere ? ' AND' : ' WHERE'} title LIKE ?${excludeClause} ORDER BY ${orderClause} LIMIT ? OFFSET ?`
+    ).all(`%${search}%`, ...excludeSourceKeys, limit, offset) as Record<string, unknown>[]).map(row2movie)
   }
   return (getDb().prepare(
-    `SELECT * FROM movies ${baseWhere} ORDER BY ${orderClause} LIMIT ? OFFSET ?`
-  ).all(limit, offset) as Record<string, unknown>[]).map(row2movie)
+    `SELECT * FROM movies ${baseWhere}${excludeClause} ORDER BY ${orderClause} LIMIT ? OFFSET ?`
+  ).all(...excludeSourceKeys, limit, offset) as Record<string, unknown>[]).map(row2movie)
 }
 
 export function countMovies(search?: string, availableOnly = false): number {
@@ -1130,18 +1138,19 @@ export function upsertShow(s: Omit<Show, 'id'>): void {
 }
 
 export function listShows(opts: ListOpts = {}): Show[] {
-  const { search, sortBy, sortOrder, limit = 50, offset = 0, availableOnly = false, userId = DEFAULT_ADMIN_USER_ID } = opts
+  const { search, sortBy, sortOrder, limit = 50, offset = 0, availableOnly = false, userId = DEFAULT_ADMIN_USER_ID, excludeSourceKeys = [] } = opts
   const sortSpec = showSortSpec(sortBy, userId)
   const orderClause = sortSpec.directional ? `${sortSpec.expr} ${sortDirection(sortOrder)}` : sortSpec.expr
   const baseWhere = showAvailabilityWhere(availableOnly)
+  const excludeClause = browseOnlyClause('show', 'shows', excludeSourceKeys)
   if (search) {
     return (getDb().prepare(
-      `SELECT * FROM shows ${baseWhere}${baseWhere ? ' AND' : ' WHERE'} title LIKE ? ORDER BY ${orderClause} LIMIT ? OFFSET ?`
-    ).all(`%${search}%`, limit, offset) as Record<string, unknown>[]).map(row2show)
+      `SELECT * FROM shows ${baseWhere}${baseWhere ? ' AND' : ' WHERE'} title LIKE ?${excludeClause} ORDER BY ${orderClause} LIMIT ? OFFSET ?`
+    ).all(`%${search}%`, ...excludeSourceKeys, limit, offset) as Record<string, unknown>[]).map(row2show)
   }
   return (getDb().prepare(
-    `SELECT * FROM shows ${baseWhere} ORDER BY ${orderClause} LIMIT ? OFFSET ?`
-  ).all(limit, offset) as Record<string, unknown>[]).map(row2show)
+    `SELECT * FROM shows ${baseWhere}${excludeClause} ORDER BY ${orderClause} LIMIT ? OFFSET ?`
+  ).all(...excludeSourceKeys, limit, offset) as Record<string, unknown>[]).map(row2show)
 }
 
 export function countShows(search?: string, availableOnly = false): number {

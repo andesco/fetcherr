@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import { parseTorrentTitle, type ParsedResult as ParsedTorrentTitleResult } from '@viren070/parse-torrent-title'
 import { randomBytes } from 'node:crypto'
-import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseStremioSearchSource } from './config.js'
+import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseTraktListModes, parseStremioSearchSource } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -88,6 +88,7 @@ getDb()
   if (s.traktClientId)      config.traktClientId       = s.traktClientId
   if (s.traktClientSecret)  config.traktClientSecret   = s.traktClientSecret
   if (s.traktLists != null) config.traktLists          = parseTraktLists(s.traktLists)
+  if (s.traktListModes != null) config.traktListModes  = parseTraktListModes(s.traktListModes)
   if (s.traktWatchlistMovies != null) config.traktWatchlistMovies = parseBooleanSetting(s.traktWatchlistMovies, true)
   if (s.traktWatchlistShows != null)  config.traktWatchlistShows  = parseBooleanSetting(s.traktWatchlistShows, true)
   if (s.traktWatchHistory != null) config.traktWatchHistory = parseBooleanSetting(s.traktWatchHistory, false)

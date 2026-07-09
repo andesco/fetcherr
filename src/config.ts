@@ -24,10 +24,33 @@ export function parseTraktLists(value: string): string[] {
   return value.split(',').map(s => s.trim()).filter(Boolean)
 }
 
+export type TraktListMode = 'library' | 'folder' | 'collection' | 'browse_only'
+
+export function parseTraktListModes(value: string): Record<string, TraktListMode> {
+  if (!value.trim()) return {}
+  try {
+    const parsed = JSON.parse(value)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const MODES = new Set(['library', 'folder', 'collection', 'browse_only'])
+      const result: Record<string, TraktListMode> = {}
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'string' && MODES.has(v)) result[k] = v as TraktListMode
+      }
+      return result
+    }
+  } catch { /* ignore */ }
+  return {}
+}
+
+export type MdblistListMode = 'library' | 'folder' | 'collection' | 'browse_only'
+
 export interface MdblistListEntry {
   url: string
   name?: string
+  mode?: MdblistListMode
 }
+
+const MDBLIST_MODES = new Set<string>(['library', 'folder', 'collection', 'browse_only'])
 
 export function parseMdblistLists(value: string): MdblistListEntry[] {
   if (!value.trim()) return []
@@ -41,6 +64,7 @@ export function parseMdblistLists(value: string): MdblistListEntry[] {
           .map(e => ({
             url: String(e.url).trim(),
             ...(e.name && String(e.name).trim() ? { name: String(e.name).trim() } : {}),
+            ...(typeof e.mode === 'string' && MDBLIST_MODES.has(e.mode) ? { mode: e.mode as MdblistListMode } : {}),
           }))
           .filter(e => e.url)
       }
@@ -175,6 +199,7 @@ export const config = {
   traktClientSecret: process.env.TRAKT_CLIENT_SECRET ?? '',
   traktUsername:     process.env.TRAKT_USERNAME ?? '',
   traktLists:        parseTraktLists(process.env.TRAKT_LISTS ?? ''),
+  traktListModes:    parseTraktListModes(process.env.TRAKT_LIST_MODES ?? ''),
   traktWatchlistMovies: parseBooleanSetting(process.env.TRAKT_WATCHLIST_MOVIES, true),
   traktWatchlistShows:  parseBooleanSetting(process.env.TRAKT_WATCHLIST_SHOWS, true),
   traktWatchHistory: parseBooleanSetting(process.env.TRAKT_WATCH_HISTORY, false),

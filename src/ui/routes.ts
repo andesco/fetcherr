@@ -740,6 +740,7 @@ export async function uiRoutes(app: FastifyInstance) {
       traktWatchHistory: config.traktWatchHistory,
       traktCollections: config.traktCollections,
       traktFolders: config.traktFolders,
+      traktListModes: config.traktListModes,
       mdblistFolders: config.mdblistFolders,
       mdblistLists: config.mdblistLists,
       hasMdblistApiKey: !!getSetting('mdblistApiKey'),
@@ -942,11 +943,25 @@ export async function uiRoutes(app: FastifyInstance) {
       config.traktLists = lists
       cleanupRemovedTraktListSources(lists)
     }
+    if (body.traktListModes != null && typeof body.traktListModes === 'object' && !Array.isArray(body.traktListModes)) {
+      const MODES = new Set(['library', 'folder', 'collection', 'browse_only'])
+      const modes: Record<string, string> = {}
+      for (const [k, v] of Object.entries(body.traktListModes as Record<string, unknown>)) {
+        if (typeof v === 'string' && MODES.has(v) && v !== 'library') modes[k] = v
+      }
+      setSetting('traktListModes', JSON.stringify(modes))
+      config.traktListModes = modes as Record<string, import('../config.js').TraktListMode>
+    }
     if (Array.isArray(body.mdblistLists)) {
       try {
+        const MODES = new Set(['library', 'folder', 'collection', 'browse_only'])
         const raw = (body.mdblistLists as unknown[])
-          .filter((v): v is { url: string; name?: string } => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
-          .map(v => ({ url: v.url.trim(), ...(v.name?.trim() ? { name: v.name.trim() } : {}) }))
+          .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
+          .map(v => ({
+            url: String(v.url).trim(),
+            ...(v.name && String(v.name).trim() ? { name: String(v.name).trim() } : {}),
+            ...(typeof v.mode === 'string' && MODES.has(v.mode) ? { mode: v.mode as 'library' | 'folder' | 'collection' | 'browse_only' } : {}),
+          }))
         const entries = normalizeMdblistEntries(raw)
         setSetting('mdblistLists', JSON.stringify(entries))
         config.mdblistLists = entries

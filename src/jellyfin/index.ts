@@ -7,7 +7,7 @@ import {
   listMovies, countMovies, getMovieByTmdbId,
   listUsers, getUserData, saveProgress, markPlayed, markUnplayed, listResumeItemIds, countResumeItems, getAllPlayedItemIds,
   getEffectiveShowMode, listShows, countShows, getShowByTmdbId,
-  getSeasonsForShow, getSeason, getEpisodesForSeason, getAiredEpisodesForSeason, getFirstAiredEpisodeForShow, isMovieVisibleToLibrary, isEpisodeVisibleToLibrary, hasAnySourceItem,
+  getSeasonsForShow, getSeason, getEpisodesForSeason, getAiredEpisodesForSeason, isMovieVisibleToLibrary, isEpisodeVisibleToLibrary, hasAnySourceItem,
   authEnabled, canUserAccessKnownRating, canUserAccessMovie, canUserAccessShow, getDb, getUserById, getUserByUsername, hasRatingLimit, verifyUserCredentials, DEFAULT_ADMIN_USER_ID, isLibraryItemHidden, listSourceItems, type AppUser,
 } from '../db.js'
 import {
@@ -50,6 +50,35 @@ const SEARCH_SERVER_GUID = 'a0000000-0000-0000-0000-00000000f001'
 const FOLDER_ID = MOVIES_FOLDER_ID
 
 const API_LIBRARY_FILTER = { availableOnly: true as const }
+
+function traktListMode(slug: string): string {
+  return config.traktListModes[slug] ?? 'library'
+}
+
+function isTraktEntryVisible(slug: string): boolean {
+  const mode = traktListMode(slug)
+  if (mode === 'folder' || mode === 'browse_only') return true
+  if (mode === 'collection' || mode === 'library') return false
+  return isTraktListFolder(config.traktFolders, slug)
+}
+
+function isTraktEntryCollection(slug: string): boolean {
+  const m = config.traktListModes[slug]
+  if (m === 'collection') return true
+  if (m != null && m !== 'library') return false
+  return config.traktCollections
+}
+
+function apiLibraryFilter(): { availableOnly: true; excludeSourceKeys?: string[] } {
+  const mdblistKeys = config.mdblistLists
+    .filter(e => e.mode === 'browse_only')
+    .map(e => mdblistFolderSourceKey(e.url))
+  const traktKeys = config.traktLists
+    .filter(slug => config.traktListModes[slug] === 'browse_only')
+    .map(slug => `trakt:list:${slug}`)
+  const keys = [...mdblistKeys, ...traktKeys]
+  return keys.length ? { availableOnly: true, excludeSourceKeys: keys } : API_LIBRARY_FILTER
+}
 const READ_CACHE_TTL_MS = 3_000
 const IMAGE_PROXY_TTL_MS = 60 * 60 * 1000
 const IMAGE_PROXY_TIMEOUT_MS = 10_000
@@ -638,10 +667,45 @@ function isMdblistListFolder(setting: ListFoldersSetting, url: string): boolean 
   return setting.some(s => path === s || path.endsWith(`/${s}`))
 }
 
+function isMdblistEntryVisible(entry: { url: string; mode?: string }): boolean {
+  if (entry.mode === 'folder' || entry.mode === 'browse_only') return true
+  if (entry.mode === 'library' || entry.mode === 'collection') return false
+  return isMdblistListFolder(config.mdblistFolders, entry.url)
+}
+
 function mdblistFolderUrlForId(id: string | null | undefined): string | null {
-  if (!id || !hasFoldersSetting(config.mdblistFolders)) return null
+  if (!id) return null
   const url = idToMdblistListUrl(id)
-  return url && isMdblistListFolder(config.mdblistFolders, url) ? url : null
+  if (!url) return null
+  const entry = config.mdblistLists.find(e => e.url === url)
+  if (!entry) return null
+  if (entry.mode === 'folder' || entry.mode === 'browse_only' || entry.mode === 'collection') return url
+  return isMdblistListFolder(config.mdblistFolders, url) ? url : null
+}
+
+function hasAnyCollections(): boolean {
+  return config.traktLists.some(slug => isTraktEntryCollection(slug))
+    || config.mdblistLists.some(e => e.mode === 'collection')
+}
+
+function buildMdblistCollectionItem(entry: { url: string; name?: string; mode?: string }, count: number) {
+  const path = mdblistListPathFromUrl(entry.url)
+  const id = mdblistFolderIdFromPath(path)
+  const name = nameForMdblistUrl(entry.url)
+  return {
+    Id: id, ServerId: SERVER_GUID, Name: name, SortName: name.toLowerCase(),
+    Type: 'BoxSet', CollectionType: 'boxsets', IsFolder: true,
+    CanDelete: false, CanDownload: false, PlayAccess: 'Full',
+    ChildCount: count, RecursiveItemCount: count,
+    ImageTags: { Primary: 'mdblist', Backdrop: 'mdblist' },
+    UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: id },
+  }
+}
+
+function mdblistCollectionItems(user: AppUser) {
+  return config.mdblistLists
+    .filter(e => e.mode === 'collection')
+    .map(e => buildMdblistCollectionItem(e, mdblistFolderMembers(user, e.url).length))
 }
 
 type CollectionMember = { mediaType: 'movie' | 'show'; tmdbId: number }
@@ -808,6 +872,7 @@ function traktCollectionSummariesForUser(user: AppUser): TraktCollectionSummary[
   if (cached && cached.expiresAt > now) return cached.summaries
 
   const summaries = config.traktLists
+    .filter(slug => isTraktEntryCollection(slug))
     .map(slug => {
       const members = collectionMembersForUser(user, slug)
       return { slug, members, item: buildTraktCollectionItem(slug, members) }
@@ -826,8 +891,10 @@ function traktCollectionItemsForUser(user: AppUser): TraktCollectionItem[] {
 }
 
 function traktCollectionsFolderToItem(user: AppUser) {
-  const collections = traktCollectionSummariesForUser(user)
-  const itemCount = collections.reduce((sum, summary) => sum + summary.members.length, 0)
+  const traktSummaries = traktCollectionSummariesForUser(user)
+  const mdblistCollEntries = config.mdblistLists.filter(e => e.mode === 'collection')
+  const traktItemCount = traktSummaries.reduce((sum, s) => sum + s.members.length, 0)
+  const mdblistItemCount = mdblistCollEntries.reduce((sum, e) => sum + mdblistFolderMembers(user, e.url).length, 0)
   return {
     Name:               'Collections',
     Id:                 COLLECTIONS_FOLDER_ID,
@@ -836,8 +903,8 @@ function traktCollectionsFolderToItem(user: AppUser) {
     CollectionType:     'boxsets',
     IsFolder:           true,
     Path:               '/collections',
-    ChildCount:         collections.length,
-    RecursiveItemCount: itemCount,
+    ChildCount:         traktSummaries.length + mdblistCollEntries.length,
+    RecursiveItemCount: traktItemCount + mdblistItemCount,
     ImageTags:          rootFolderImageTags(COLLECTIONS_FOLDER_ID),
     UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: COLLECTIONS_FOLDER_ID },
   }
@@ -908,7 +975,7 @@ function bestRootFolderImage(
   if (id === MOVIES_FOLDER_ID) {
     const movies = filterMoviesForUser(
       visibleUser,
-      listMovies({ sortBy: 'popularity', sortOrder: 'DESC', limit: 100, offset: 0, userId: visibleUser.id, ...API_LIBRARY_FILTER }),
+      listMovies({ sortBy: 'popularity', sortOrder: 'DESC', limit: 100, offset: 0, userId: visibleUser.id, ...apiLibraryFilter() }),
     )
     for (const movie of movies) {
       if (movie.backdropPath) return { path: movie.backdropPath, kind: 'backdrop' }
@@ -919,16 +986,17 @@ function bestRootFolderImage(
   if (id === SHOWS_FOLDER_ID) {
     const shows = filterShowsForUser(
       visibleUser,
-      listShows({ sortBy: 'popularity', sortOrder: 'DESC', limit: 100, offset: 0, userId: visibleUser.id, ...API_LIBRARY_FILTER }),
+      listShows({ sortBy: 'popularity', sortOrder: 'DESC', limit: 100, offset: 0, userId: visibleUser.id, ...apiLibraryFilter() }),
     )
     for (const show of shows) {
       if (show.backdropPath) return { path: show.backdropPath, kind: 'backdrop' }
       if (show.posterPath) return { path: show.posterPath, kind: 'poster' }
     }
   }
-  if (id === COLLECTIONS_FOLDER_ID && config.traktCollections) {
-    const members = traktCollectionSummariesForUser(visibleUser).flatMap(summary => summary.members)
-    return bestCollectionArtwork(members)
+  if (id === COLLECTIONS_FOLDER_ID && hasAnyCollections()) {
+    const traktMembers = traktCollectionSummariesForUser(visibleUser).flatMap(s => s.members)
+    const mdblistMembers = config.mdblistLists.filter(e => e.mode === 'collection').flatMap(e => mdblistFolderMembers(visibleUser, e.url))
+    return bestCollectionArtwork([...traktMembers, ...mdblistMembers])
   }
   return null
 }
@@ -1449,6 +1517,24 @@ function visibleAiredEpisodesForShow(show: Show): Episode[] {
   return visibleSeasonsForShow(show).flatMap(s => getAiredEpisodesForSeason(show.tmdbId, s.seasonNumber))
 }
 
+function getFirstEpisodeOfFirstUnplayedSeason(show: Show, userId: string): Episode | null {
+  const allEps = visibleAiredEpisodesForShow(show)
+  const bySeason = new Map<number, Episode[]>()
+  for (const ep of allEps) {
+    if (ep.seasonNumber <= 0) continue
+    const arr = bySeason.get(ep.seasonNumber) ?? []
+    arr.push(ep)
+    bySeason.set(ep.seasonNumber, arr)
+  }
+  for (const episodes of bySeason.values()) {
+    const allPlayed = episodes.every(ep =>
+      getUserData(episodeToId(show.tmdbId, ep.seasonNumber, ep.episodeNumber), userId).played
+    )
+    if (!allPlayed) return episodes[0]
+  }
+  return null
+}
+
 function filterMoviesForUser(user: AppUser, movies: Movie[]): Movie[] {
   return movies.filter(movie => canUserAccessMovie(user, movie))
 }
@@ -1662,10 +1748,10 @@ async function buildSearchResultItems(
   ]
 
   const localMovies = wantMovies
-    ? filterMoviesForUser(user, listMovies({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
+    ? filterMoviesForUser(user, listMovies({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() }))
     : []
   const localShows = wantShows
-    ? filterShowsForUser(user, listShows({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
+    ? filterShowsForUser(user, listShows({ search: searchTerm, sortBy, sortOrder, limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() }))
     : []
   const externalSearchEnabled = externalSearchEnabledForUser(user)
 
@@ -2177,14 +2263,14 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   app.get('/Library/VirtualFolders', async () => opts.searchOnly ? [] : ([
     { Name: 'Movies', CollectionType: 'movies', ItemId: MOVIES_FOLDER_ID, Locations: ['/movies'] },
     { Name: 'Shows',  CollectionType: 'tvshows', ItemId: SHOWS_FOLDER_ID,  Locations: ['/shows'] },
-    ...(config.traktCollections
+    ...(hasAnyCollections()
       ? [{ Name: 'Collections', CollectionType: 'boxsets', ItemId: COLLECTIONS_FOLDER_ID, Locations: ['/collections'] }]
       : []),
-    ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => {
+    ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => {
       const name = humanizeCollectionSlug(slug.split('/').pop() ?? slug)
       return { Name: name, CollectionType: 'boxsets', ItemId: traktCollectionSlugToId(slug), Locations: [`/trakt/${slug}`] }
     }),
-    ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => {
+    ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), CollectionType: 'boxsets', ItemId: mdblistFolderIdFromPath(p), Locations: [`/mdblist/${p}`] }
     }),
@@ -2195,11 +2281,11 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   app.get('/Users/:id/GroupingOptions', async () => opts.searchOnly ? [] : ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
-    ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
-    ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => ({
+    ...(hasAnyCollections() ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
+    ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => ({
       Name: humanizeCollectionSlug(slug.split('/').pop() ?? slug), Id: traktCollectionSlugToId(slug), Type: 'boxsets',
     })),
-    ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => {
+    ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
     }),
@@ -2207,11 +2293,11 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   app.get('/UserViews/GroupingOptions', async () => opts.searchOnly ? [] : ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
-    ...(config.traktCollections ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
-    ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => ({
+    ...(hasAnyCollections() ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
+    ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => ({
       Name: humanizeCollectionSlug(slug.split('/').pop() ?? slug), Id: traktCollectionSlugToId(slug), Type: 'boxsets',
     })),
-    ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => {
+    ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
     }),
@@ -2220,8 +2306,8 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   // Views — library sections
   function viewItemsResponse(user: AppUser) {
     if (opts.searchOnly) return emptyItems()
-    const moviesCount = filterMoviesForUser(user, listMovies({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })).length
-    const showsCount = filterShowsForUser(user, listShows({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })).length
+    const moviesCount = filterMoviesForUser(user, listMovies({ limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() })).length
+    const showsCount = filterShowsForUser(user, listShows({ limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() })).length
     const items = [
       {
         Name:               'Movies',
@@ -2247,9 +2333,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         RecursiveItemCount: showsCount,
         UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: SHOWS_FOLDER_ID },
       },
-      ...(config.traktCollections ? [traktCollectionsFolderToItem(user)] : []),
-      ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
-      ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
+      ...(hasAnyCollections() ? [traktCollectionsFolderToItem(user)] : []),
+      ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
+      ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
     ]
     return {
       Items: items,
@@ -2300,13 +2386,15 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       // includeItemTypes=Season  → flat list of all seasons across all shows
       // includeItemTypes=Episode → flat list of all aired episodes across all shows
       // includeItemTypes=Series  → list of series (default)
-      if (config.traktCollections && includeTypes.includes('boxset')) {
-        const collections = traktCollectionItemsForUser(user)
+      if (hasAnyCollections() && includeTypes.includes('boxset')) {
+        const traktItems = traktCollectionItemsForUser(user)
+        const mdblistItems = mdblistCollectionItems(user)
+        const collections = [...traktItems, ...mdblistItems]
         return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
       }
       if (includeTypes.includes('season')) {
         const allPairs = await withReadCache(`items:season-pairs:${user.id}`, async () => {
-          const shows = filterShowsForUser(user, listShows({ limit: 100_000, userId: user.id, ...API_LIBRARY_FILTER }))
+          const shows = filterShowsForUser(user, listShows({ limit: 100_000, userId: user.id, ...apiLibraryFilter() }))
           return shows.flatMap(show =>
             visibleSeasonsForShow(show).map(season => ({ show, season }))
           )
@@ -2318,7 +2406,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       }
       if (includeTypes.includes('episode')) {
         const allPairs = await withReadCache(`items:episode-pairs:${user.id}`, async () => {
-          const shows = filterShowsForUser(user, listShows({ limit: 100_000, userId: user.id, ...API_LIBRARY_FILTER }))
+          const shows = filterShowsForUser(user, listShows({ limit: 100_000, userId: user.id, ...apiLibraryFilter() }))
           return shows.flatMap(show =>
             visibleAiredEpisodesForShow(show).map(ep => ({ show, ep }))
           )
@@ -2332,7 +2420,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       if (SearchTerm) {
         return buildSearchResultItems(SearchTerm, 'series', SortBy, SortOrder, limit, offset, user)
       }
-      const allShows = filterShowsForUser(user, listShows({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
+      const allShows = filterShowsForUser(user, listShows({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() }))
       return { Items: pagedItems(allShows, offset, limit).map(show => showToSeriesItem(show, user.id)), TotalRecordCount: allShows.length, StartIndex: offset }
     }
 
@@ -2410,22 +2498,26 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
 
     const collectionSlug = ParentId ? idToTraktCollectionSlug(ParentId) : null
-    if (collectionSlug && (isTraktListFolder(config.traktFolders, collectionSlug) || config.traktCollections)) {
+    if (collectionSlug && (isTraktEntryVisible(collectionSlug) || isTraktEntryCollection(collectionSlug))) {
       const items = await traktCollectionContents(collectionSlug, user)
       return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
 
-    if (ParentId === COLLECTIONS_FOLDER_ID && config.traktCollections) {
-      const collections = traktCollectionItemsForUser(user)
+    if (ParentId === COLLECTIONS_FOLDER_ID && hasAnyCollections()) {
+      const traktItems = traktCollectionItemsForUser(user)
+      const mdblistItems = mdblistCollectionItems(user)
+      const collections = [...traktItems, ...mdblistItems]
       return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
     }
 
     if (
-      config.traktCollections &&
+      hasAnyCollections() &&
       includeTypes.includes('boxset') &&
       (!ParentId || ParentId === MOVIES_FOLDER_ID || ParentId === SHOWS_FOLDER_ID)
     ) {
-      const collections = traktCollectionItemsForUser(user)
+      const traktItems = traktCollectionItemsForUser(user)
+      const mdblistItems = mdblistCollectionItems(user)
+      const collections = [...traktItems, ...mdblistItems]
       return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
     }
 
@@ -2438,17 +2530,17 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (!ParentId) {
       // Infuse main page "TV Shows" calls Items?includeItemTypes=Series&recursive=true
       if (includeTypes.includes('series')) {
-        const shows = filterShowsForUser(user, listShows({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
+        const shows = filterShowsForUser(user, listShows({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() }))
         return { Items: pagedItems(shows, offset, limit).map(show => showToSeriesItem(show, user.id)), TotalRecordCount: shows.length, StartIndex: offset }
       }
       // Infuse main page "Movies" calls Items?includeItemTypes=Movie&recursive=true
       if (includeTypes.includes('movie')) {
-        const movies = filterMoviesForUser(user, listMovies({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
+        const movies = filterMoviesForUser(user, listMovies({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() }))
         return { Items: pagedItems(movies, offset, limit).map(movie => movieToItem(movie, user.id)), TotalRecordCount: movies.length, StartIndex: offset }
       }
       // True root listing: return collection folders
-      const nMovies = filterMoviesForUser(user, listMovies({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })).length
-      const nShows  = filterShowsForUser(user, listShows({ limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER })).length
+      const nMovies = filterMoviesForUser(user, listMovies({ limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() })).length
+      const nShows  = filterShowsForUser(user, listShows({ limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() })).length
       const folders = [
         {
           Id: MOVIES_FOLDER_ID, ServerId: SERVER_GUID, Name: 'Movies',
@@ -2462,9 +2554,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
           ChildCount: nShows, RecursiveItemCount: nShows, ImageTags: rootFolderImageTags(SHOWS_FOLDER_ID),
           UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: SHOWS_FOLDER_ID },
         },
-        ...(config.traktCollections ? [traktCollectionsFolderToItem(user)] : []),
-        ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
-        ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
+        ...(hasAnyCollections() ? [traktCollectionsFolderToItem(user)] : []),
+        ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
+        ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
       ]
       return {
         Items: folders,
@@ -2480,7 +2572,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (SearchTerm) {
       return buildSearchResultItems(SearchTerm, 'movie', SortBy, SortOrder, limit, offset, user)
     }
-    const movies = filterMoviesForUser(user, listMovies({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...API_LIBRARY_FILTER }))
+    const movies = filterMoviesForUser(user, listMovies({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() }))
     return { Items: pagedItems(movies, offset, limit).map(movie => movieToItem(movie, user.id)), TotalRecordCount: movies.length, StartIndex: offset }
   }
 
@@ -2568,7 +2660,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const allNextUp = await withReadCache(`nextup:${user.id}`, async () => {
       const playedIds = getAllPlayedItemIds(user.id)
       const resumeIds = new Set(listResumeItemIds(10_000, 0, user.id))
-      return filterShowsForUser(user, listShows({ limit: 100_000, userId: user.id, ...API_LIBRARY_FILTER }))
+      return filterShowsForUser(user, listShows({ limit: 100_000, userId: user.id, ...apiLibraryFilter() }))
         .map(show => {
           const ep = findNextUpEpisode(show, playedIds, resumeIds, user.id)
           return ep ? { show, ep } : null
@@ -2639,15 +2731,15 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (opts.searchOnly) return []
 
     if (parentId === SHOWS_FOLDER_ID) {
-      const shows = filterShowsForUser(user, listShows({ sortBy: 'dateadded', sortOrder: 'DESC', limit: lim, userId: user.id, ...API_LIBRARY_FILTER }))
+      const shows = filterShowsForUser(user, listShows({ sortBy: 'dateadded', sortOrder: 'DESC', limit: lim, userId: user.id, ...apiLibraryFilter() }))
       const items: Record<string, unknown>[] = []
       for (const show of shows) {
-        const ep = getFirstAiredEpisodeForShow(show.tmdbId)
+        const ep = getFirstEpisodeOfFirstUnplayedSeason(show, user.id)
         if (ep) items.push({ ...episodeToItem(ep, show, user.id), DateCreated: show.syncedAt })
       }
       return items
     }
-    return filterMoviesForUser(user, listMovies({ sortBy: 'dateadded', sortOrder: 'DESC', limit: lim, userId: user.id, ...API_LIBRARY_FILTER })).map(movie => movieToItem(movie, user.id))
+    return filterMoviesForUser(user, listMovies({ sortBy: 'dateadded', sortOrder: 'DESC', limit: lim, userId: user.id, ...apiLibraryFilter() })).map(movie => movieToItem(movie, user.id))
   })
 
   // Single item — /Items/:id and /Users/:userId/Items/:itemId
@@ -2734,20 +2826,20 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
     // Collection folders
     if (id === MOVIES_FOLDER_ID) {
-      const n = filterMoviesForUser(currentUser, listMovies({ limit: 10_000, offset: 0, userId: currentUser.id, ...API_LIBRARY_FILTER })).length
+      const n = filterMoviesForUser(currentUser, listMovies({ limit: 10_000, offset: 0, userId: currentUser.id, ...apiLibraryFilter() })).length
       return { Name: 'Movies', Id: MOVIES_FOLDER_ID, ServerId: SERVER_GUID,
         Type: 'CollectionFolder', CollectionType: 'movies', IsFolder: true, Path: '/movies',
         RecursiveItemCount: n, ChildCount: n, ImageTags: rootFolderImageTags(MOVIES_FOLDER_ID),
         UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: MOVIES_FOLDER_ID } }
     }
     if (id === SHOWS_FOLDER_ID) {
-      const n = filterShowsForUser(currentUser, listShows({ limit: 10_000, offset: 0, userId: currentUser.id, ...API_LIBRARY_FILTER })).length
+      const n = filterShowsForUser(currentUser, listShows({ limit: 10_000, offset: 0, userId: currentUser.id, ...apiLibraryFilter() })).length
       return { Name: 'Shows', Id: SHOWS_FOLDER_ID, ServerId: SERVER_GUID,
         Type: 'CollectionFolder', CollectionType: 'tvshows', IsFolder: true, Path: '/shows',
         RecursiveItemCount: n, ChildCount: n, ImageTags: rootFolderImageTags(SHOWS_FOLDER_ID),
         UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: SHOWS_FOLDER_ID } }
     }
-    if (id === COLLECTIONS_FOLDER_ID && config.traktCollections) {
+    if (id === COLLECTIONS_FOLDER_ID && hasAnyCollections()) {
       return traktCollectionsFolderToItem(currentUser)
     }
 
@@ -2755,12 +2847,16 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (collectionSlug && isTraktListFolder(config.traktFolders, collectionSlug)) {
       return buildTraktFolderItem(collectionSlug, collectionMembersForUser(currentUser, collectionSlug).length)
     }
-    if (collectionSlug && config.traktCollections) {
+    if (collectionSlug && isTraktEntryCollection(collectionSlug)) {
       return traktCollectionToItem(collectionSlug, currentUser)
     }
 
     const mdblistUrl = mdblistFolderUrlForId(id)
     if (mdblistUrl) {
+      const entry = config.mdblistLists.find(e => e.url === mdblistUrl)
+      if (entry?.mode === 'collection') {
+        return buildMdblistCollectionItem(entry, mdblistFolderMembers(currentUser, mdblistUrl).length)
+      }
       return buildMdblistFolderItem(mdblistUrl, mdblistFolderMembers(currentUser, mdblistUrl).length)
     }
 
@@ -3030,7 +3126,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
 
     const collectionSlug = idToTraktCollectionSlug(id)
-    if (collectionSlug && (config.traktCollections || isTraktListFolder(config.traktFolders, collectionSlug))) {
+    if (collectionSlug && (isTraktEntryCollection(collectionSlug) || isTraktEntryVisible(collectionSlug))) {
       return sendTraktCollectionImage(collectionSlug, type, query, headers, reply)
     }
 

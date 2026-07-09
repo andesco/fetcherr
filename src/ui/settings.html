@@ -283,16 +283,8 @@
           <div class="check-slug">Marks watched state for the admin account.</div>
         </div>
       </label>
-      <div class="field">
-        <label for="traktListDisplay">Show Trakt Lists As</label>
-        <select id="traktListDisplay" onchange="onTraktDisplayChange()">
-          <option value="off">Off</option>
-          <option value="collections">Collections</option>
-          <option value="folders">Library Folders</option>
-        </select>
-      </div>
     </div>
-    <div class="field-note trakt-list-note">Trakt lists to sync in addition to watchlists.</div>
+    <div class="field-note trakt-list-note">Trakt lists to sync in addition to watchlists. Use the ⋮ menu on each list to control how it appears.</div>
     <div class="field-note trakt-list-note compact">Smart Lists are not shown — Trakt's API doesn't expose them.</div>
     <div class="btn-row trakt-list-actions">
       <button type="button" class="btn btn-sm" onclick="selectAllTraktLists()">Select All</button>
@@ -306,7 +298,7 @@
   <!-- MDBList -->
   <section class="section" id="mdblist">
     <div class="section-title">MDBList</div>
-    <div class="field-note trakt-list-note">Public MDBList URLs synced with your library. Toggle the folder icon on each list to show it as a library folder.</div>
+    <div class="field-note trakt-list-note">Public MDBList URLs synced with your library. Use the ⋮ menu on each list to control how it appears: as a folder, collection, or browse-only (visible in Infuse but excluded from the main library).</div>
     <div class="btn-row trakt-list-actions">
       <a class="btn btn-sm" href="https://mdblist.com/toplists/" target="_blank" rel="noreferrer">Browse Top Lists</a>
     </div>
@@ -434,9 +426,11 @@
 
 <script>
   let selectedTraktLists = []
-  let traktFolderSlugs = null  // null=all lists are folders, string[]=specific slugs
+  let traktListModes = {}
+  let traktListsData = []
+  let traktOpenMenuSlug = null
   let mdblistEntries = []
-  let mdblistFolderUrls = []   // entry URLs designated as library folders
+  let mdblistOpenMenuIdx = -1
   let mdblistEditIdx = -1
   let traktAuthPending = false
   let traktAuthPollId = null
@@ -645,6 +639,9 @@
     el.style.display = ''
     el.className = ['callout', kind].filter(Boolean).join(' ')
     el.textContent = msg
+    // #out sits at the bottom of the settings column; errors triggered from
+    // sections higher up would otherwise land off-screen unnoticed.
+    if (kind === 'error') el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 
   function syncMediaSourceLimitVisibility() {
@@ -768,6 +765,8 @@
     } catch { return entry.url }
   }
 
+  const MDBLIST_MODE_LABELS = { library: 'Library', folder: 'Folder', collection: 'Collection', browse_only: 'Browse Only' }
+
   function renderMdblistRows() {
     const container = document.getElementById('mdblistRows')
     if (!mdblistEntries.length) {
@@ -775,26 +774,63 @@
       return
     }
     container.innerHTML = mdblistEntries.map((entry, idx) => {
-      const isFolder = isMdblistFolder(entry.url)
+      const mode = entry.mode || 'library'
+      const badge = mode !== 'library' ? `<span class="mdblist-mode-badge mdblist-mode-${mode}">${MDBLIST_MODE_LABELS[mode]}</span>` : ''
+      const isOpen = mdblistOpenMenuIdx === idx
       return `<div class="mdblist-row">
-        <div class="mdblist-name">${_esc(mdblistDisplayName(entry))}</div>
-        <div class="mdblist-row-actions">
-          <button type="button" class="folder-toggle${isFolder ? ' active' : ''}" title="${isFolder ? 'Remove from library folders' : 'Add to library folder'}" aria-label="${isFolder ? 'Remove from library folders' : 'Add to library folder'}" data-url="${_esc(entry.url)}" onclick="toggleMdblistFolder(this.dataset.url, this)">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>'}</button>
-          <button type="button" class="btn-icon" title="Edit list" aria-label="Edit list" onclick="openMdblistEditModal(${idx})">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-            </svg>
+        <div class="mdblist-name">${_esc(mdblistDisplayName(entry))}${badge}</div>
+        <div class="mdblist-row-menu${isOpen ? ' open' : ''}" id="mdblist-menu-${idx}">
+          <button type="button" class="mdblist-menu-trigger btn-icon" title="List options" aria-label="List options" onclick="toggleMdblistMenu(${idx}, event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
           </button>
-          <button type="button" class="btn-remove" title="Remove list" aria-label="Remove list" onclick="removeMdblistEntry(${idx})">
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
-          </button>
+          <div class="mdblist-menu-dropdown">
+            <div class="mdblist-menu-item${mode === 'library' ? ' checked' : ''}" onclick="setMdblistMode(${idx}, 'library')">Library</div>
+            <div class="mdblist-menu-item${mode === 'folder' ? ' checked' : ''}" onclick="setMdblistMode(${idx}, 'folder')">Add as Folder</div>
+            <div class="mdblist-menu-item${mode === 'collection' ? ' checked' : ''}" onclick="setMdblistMode(${idx}, 'collection')">Add as Collection</div>
+            <div class="mdblist-menu-item${mode === 'browse_only' ? ' checked' : ''}" onclick="setMdblistMode(${idx}, 'browse_only')">Browse Only</div>
+            <div class="mdblist-menu-divider"></div>
+            <div class="mdblist-menu-item" onclick="openMdblistEditModal(${idx}); closeMdblistMenus()">Edit</div>
+            <div class="mdblist-menu-item mdblist-menu-danger" onclick="removeMdblistEntry(${idx})">Remove</div>
+          </div>
         </div>
       </div>`
     }).join('')
   }
+
+  function toggleMdblistMenu(idx, event) {
+    event.stopPropagation()
+    mdblistOpenMenuIdx = mdblistOpenMenuIdx === idx ? -1 : idx
+    renderMdblistRows()
+  }
+
+  function closeMdblistMenus() {
+    if (mdblistOpenMenuIdx !== -1) { mdblistOpenMenuIdx = -1; renderMdblistRows() }
+  }
+
+  function setMdblistMode(idx, mode) {
+    mdblistEntries = mdblistEntries.map((e, i) => i === idx ? { ...e, mode: mode === 'library' ? undefined : mode } : e)
+    mdblistOpenMenuIdx = -1
+    renderMdblistRows()
+    _markDirty()
+  }
+
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.mdblist-row-menu')) {
+      if (mdblistOpenMenuIdx !== -1) closeMdblistMenus()
+      closeTraktMenu()
+    }
+  })
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape') return
+    closeMdblistMenus()
+    closeTraktMenu()
+  })
+
+  // The open Trakt dropdown is fixed-positioned, so any scroll would leave it
+  // floating detached from its trigger — close it instead.
+  window.addEventListener('scroll', closeTraktMenu, { passive: true })
+  document.getElementById('traktLists').addEventListener('scroll', closeTraktMenu, { passive: true })
 
   function addMdblistEntry() {
     const input = document.getElementById('mdblistAddInput')
@@ -819,9 +855,8 @@
   }
 
   function removeMdblistEntry(idx) {
-    const removed = mdblistEntries[idx]
-    if (removed) mdblistFolderUrls = mdblistFolderUrls.filter(u => u !== removed.url)
     mdblistEntries = mdblistEntries.filter((_, i) => i !== idx)
+    mdblistOpenMenuIdx = -1
     renderMdblistRows()
     _markDirty()
   }
@@ -855,7 +890,10 @@
       return
     }
     if (mdblistEditIdx >= 0 && mdblistEditIdx < mdblistEntries.length) {
-      mdblistEntries = mdblistEntries.map((e, i) => i === mdblistEditIdx ? { url, ...(name ? { name } : {}) } : e)
+      const existing = mdblistEntries[mdblistEditIdx]
+      mdblistEntries = mdblistEntries.map((e, i) => i === mdblistEditIdx
+        ? { url, ...(name ? { name } : {}), ...(existing.mode ? { mode: existing.mode } : {}) }
+        : e)
       renderMdblistRows()
       _markDirty()
     }
@@ -917,24 +955,32 @@
     document.getElementById('traktWatchlistMovies').checked = d.traktWatchlistMovies !== false
     document.getElementById('traktWatchlistShows').checked = d.traktWatchlistShows !== false
     document.getElementById('traktWatchHistory').checked = d.traktWatchHistory === true
-    if (Array.isArray(d.traktFolders)) {
-      traktFolderSlugs = d.traktFolders
-      document.getElementById('traktListDisplay').value = 'folders'
+    if (d.traktListModes && typeof d.traktListModes === 'object') {
+      traktListModes = { ...d.traktListModes }
     } else {
-      traktFolderSlugs = d.traktFolders === true ? null : []
-      document.getElementById('traktListDisplay').value = d.traktFolders ? 'folders' : d.traktCollections ? 'collections' : 'off'
+      // Migrate legacy traktFolders/traktCollections → per-list modes
+      traktListModes = {}
+      if (d.traktCollections) {
+        for (const slug of (Array.isArray(d.traktLists) ? d.traktLists : [])) traktListModes[slug] = 'collection'
+      } else if (d.traktFolders === true) {
+        for (const slug of (Array.isArray(d.traktLists) ? d.traktLists : [])) traktListModes[slug] = 'folder'
+      } else if (Array.isArray(d.traktFolders)) {
+        for (const slug of (Array.isArray(d.traktLists) ? d.traktLists : [])) {
+          if (d.traktFolders.some(s => slug === s || slug.endsWith('/' + s))) traktListModes[slug] = 'folder'
+        }
+      }
     }
     document.getElementById('torBoxCleanupEnabled').checked = d.torBoxCleanupEnabled !== false
     setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
-    mdblistEntries = Array.isArray(d.mdblistLists) ? d.mdblistLists : []
-    if (Array.isArray(d.mdblistFolders)) {
-      mdblistFolderUrls = mdblistEntries.filter(e => {
+    mdblistEntries = Array.isArray(d.mdblistLists) ? d.mdblistLists.map(e => {
+      // Migrate legacy mdblistFolders setting: if no mode set but entry's path is in mdblistFolders, mark as folder
+      if (!e.mode && Array.isArray(d.mdblistFolders)) {
         const p = mdblistPathFromUrl(e.url)
-        return d.mdblistFolders.some(s => p === s || p.endsWith('/' + s))
-      }).map(e => e.url)
-    } else {
-      mdblistFolderUrls = d.mdblistFolders === true ? mdblistEntries.map(e => e.url) : []
-    }
+        if (d.mdblistFolders.some(s => p === s || p.endsWith('/' + s))) return { ...e, mode: 'folder' }
+      }
+      if (!e.mode && d.mdblistFolders === true) return { ...e, mode: 'folder' }
+      return e
+    }) : []
     renderMdblistRows()
     selectedTraktLists = Array.isArray(d.traktLists) ? d.traktLists : []
     managedUsers = Array.isArray(d.users) ? d.users.map(user => ({ ...user, pendingPassword: '' })) : []
@@ -1207,47 +1253,71 @@
     catch { return url }
   }
 
-  function onTraktDisplayChange() {
-    const mode = document.getElementById('traktListDisplay').value
+
+
+  function renderTraktLists() {
     const el = document.getElementById('traktLists')
-    el.classList.toggle('folder-mode', mode === 'folders')
-    document.querySelectorAll('#traktLists .folder-toggle').forEach(btn => {
-      const slug = btn.dataset.slug
-      const active = traktFolderSlugs === null || (Array.isArray(traktFolderSlugs) && traktFolderSlugs.includes(slug))
-      btn.classList.toggle('active', active)
-    })
-    _markDirty()
+    if (!traktListsData.length) return
+    el.innerHTML = traktListsData.map(list => {
+      const mode = traktListModes[list.slug] || 'library'
+      const badge = mode !== 'library' ? `<span class="mdblist-mode-badge mdblist-mode-${mode}">${MDBLIST_MODE_LABELS[mode]}</span>` : ''
+      const isOpen = traktOpenMenuSlug === list.slug
+      const safeId = list.slug.replace(/\//g, '-')
+      return `<label class="check-item">
+        <input type="checkbox" value="${_esc(list.slug)}" ${selectedTraktLists.includes(list.slug) ? 'checked' : ''} onchange="toggleTraktList(this)">
+        <div class="check-meta">
+          <div class="check-title">${_esc(list.name)}${badge}</div>
+          <div class="check-slug">${_esc(list.slug)}</div>
+        </div>
+        <div class="mdblist-row-menu${isOpen ? ' open' : ''}" id="trakt-menu-${safeId}">
+          <button type="button" class="mdblist-menu-trigger btn-icon" title="List options" aria-label="List options" onclick="event.preventDefault(); event.stopPropagation(); toggleTraktMenu('${_esc(list.slug)}', event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          </button>
+          <div class="mdblist-menu-dropdown">
+            <div class="mdblist-menu-item${mode === 'library' ? ' checked' : ''}" onclick="event.preventDefault(); event.stopPropagation(); setTraktListMode('${_esc(list.slug)}', 'library')">Library</div>
+            <div class="mdblist-menu-item${mode === 'folder' ? ' checked' : ''}" onclick="event.preventDefault(); event.stopPropagation(); setTraktListMode('${_esc(list.slug)}', 'folder')">Add as Folder</div>
+            <div class="mdblist-menu-item${mode === 'collection' ? ' checked' : ''}" onclick="event.preventDefault(); event.stopPropagation(); setTraktListMode('${_esc(list.slug)}', 'collection')">Add as Collection</div>
+            <div class="mdblist-menu-item${mode === 'browse_only' ? ' checked' : ''}" onclick="event.preventDefault(); event.stopPropagation(); setTraktListMode('${_esc(list.slug)}', 'browse_only')">Browse Only</div>
+          </div>
+        </div>
+      </label>`
+    }).join('')
+    positionTraktDropdown()
   }
 
-  function toggleTraktFolder(btn) {
-    const slug = btn.dataset.slug
-    if (traktFolderSlugs === null) {
-      const allSlugs = [...document.querySelectorAll('#traktLists input[type="checkbox"]')].map(i => i.value)
-      traktFolderSlugs = allSlugs.filter(s => s !== slug)
-    } else {
-      if (traktFolderSlugs.includes(slug)) {
-        traktFolderSlugs = traktFolderSlugs.filter(s => s !== slug)
-      } else {
-        traktFolderSlugs = [...traktFolderSlugs, slug]
-      }
-    }
-    const active = traktFolderSlugs === null || traktFolderSlugs.includes(slug)
-    btn.classList.toggle('active', active)
-    btn.title = active ? 'Remove from library folders' : 'Add to library folders'
-    _markDirty()
+  // The Trakt checklist scrolls (overflow: auto), which clips absolutely
+  // positioned dropdowns — so the open menu is re-anchored with fixed
+  // positioning and flipped upward when it would extend past the viewport.
+  function positionTraktDropdown() {
+    const menu = document.querySelector('#traktLists .mdblist-row-menu.open')
+    if (!menu) return
+    const trigger = menu.querySelector('.mdblist-menu-trigger')
+    const dropdown = menu.querySelector('.mdblist-menu-dropdown')
+    if (!trigger || !dropdown) return
+    const r = trigger.getBoundingClientRect()
+    dropdown.style.position = 'fixed'
+    dropdown.style.right = 'auto'
+    dropdown.style.left = `${Math.max(8, r.right - dropdown.offsetWidth)}px`
+    const below = r.bottom + 4
+    dropdown.style.top = below + dropdown.offsetHeight > window.innerHeight - 8
+      ? `${Math.max(8, r.top - dropdown.offsetHeight - 4)}px`
+      : `${below}px`
   }
 
-  function isMdblistFolder(url) {
-    return mdblistFolderUrls.includes(url)
+  function closeTraktMenu() {
+    if (traktOpenMenuSlug !== null) { traktOpenMenuSlug = null; renderTraktLists() }
   }
 
-  function toggleMdblistFolder(url, btn) {
-    if (mdblistFolderUrls.includes(url)) {
-      mdblistFolderUrls = mdblistFolderUrls.filter(u => u !== url)
-    } else {
-      mdblistFolderUrls = [...mdblistFolderUrls, url]
-    }
-    btn.classList.toggle('active', mdblistFolderUrls.includes(url))
+  function toggleTraktMenu(slug, event) {
+    event.stopPropagation()
+    traktOpenMenuSlug = traktOpenMenuSlug === slug ? null : slug
+    renderTraktLists()
+  }
+
+  function setTraktListMode(slug, mode) {
+    if (mode === 'library') { delete traktListModes[slug] } else { traktListModes[slug] = mode }
+    traktOpenMenuSlug = null
+    renderTraktLists()
     _markDirty()
   }
 
@@ -1262,24 +1332,12 @@
     }
     const d = await res.json()
     selectedTraktLists = Array.isArray(d.selected) ? d.selected : selectedTraktLists
-    if (!d.lists?.length) {
+    traktListsData = Array.isArray(d.lists) ? d.lists : []
+    if (!traktListsData.length) {
       el.innerHTML = '<div class="field-note">No Trakt lists found for this account.</div>'
       return
     }
-    const isFolderMode = document.getElementById('traktListDisplay').value === 'folders'
-    if (isFolderMode) el.classList.add('folder-mode')
-    else el.classList.remove('folder-mode')
-    el.innerHTML = d.lists.map(list => {
-      const isFolder = traktFolderSlugs === null || traktFolderSlugs.includes(list.slug)
-      return `<label class="check-item">
-        <input type="checkbox" value="${list.slug}" ${selectedTraktLists.includes(list.slug) ? 'checked' : ''} onchange="toggleTraktList(this)">
-        <div class="check-meta">
-          <div class="check-title">${list.name}</div>
-          <div class="check-slug">${list.slug}</div>
-        </div>
-        <button type="button" class="folder-toggle${isFolder ? ' active' : ''}" data-slug="${list.slug}" onclick="event.preventDefault(); toggleTraktFolder(this)" title="${isFolder ? 'Remove from library folders' : 'Add to library folders'}" aria-label="${isFolder ? 'Remove from library folders' : 'Add to library folders'}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>'}</button>
-      </label>`
-    }).join('')
+    renderTraktLists()
   }
 
   function toggleTraktList(input) {
@@ -1292,16 +1350,13 @@
   }
 
   function selectAllTraktLists() {
-    const inputs = [...document.querySelectorAll('#traktLists input[type="checkbox"]')]
-    selectedTraktLists = inputs.map(input => input.value)
-    inputs.forEach(input => { input.checked = true })
+    selectedTraktLists = traktListsData.map(l => l.slug)
+    renderTraktLists()
   }
 
   function clearAllTraktLists() {
     selectedTraktLists = []
-    document.querySelectorAll('#traktLists input[type="checkbox"]').forEach(input => {
-      input.checked = false
-    })
+    renderTraktLists()
   }
 
   async function validateApiKey(service) {
@@ -1362,7 +1417,6 @@
         traktWatchlistMovies: document.getElementById('traktWatchlistMovies').checked,
         traktWatchlistShows: document.getElementById('traktWatchlistShows').checked,
         traktWatchHistory: document.getElementById('traktWatchHistory').checked,
-        traktCollections: document.getElementById('traktListDisplay').value === 'collections',
         ...(traktClientSecret ? { traktClientSecret } : {}),
       }),
     })
@@ -1435,13 +1489,9 @@
       traktWatchlistMovies: document.getElementById('traktWatchlistMovies').checked,
       traktWatchlistShows: document.getElementById('traktWatchlistShows').checked,
       traktWatchHistory: document.getElementById('traktWatchHistory').checked,
-      traktCollections: document.getElementById('traktListDisplay').value === 'collections',
-      traktFolders: document.getElementById('traktListDisplay').value === 'folders'
-        ? (traktFolderSlugs ?? true)
-        : false,
       torBoxCleanupEnabled: document.getElementById('torBoxCleanupEnabled').checked,
       traktLists:        selectedTraktLists,
-      mdblistFolders: mdblistFolderUrls.map(url => mdblistPathFromUrl(url)),
+      traktListModes:    traktListModes,
       mdblistLists: mdblistEntries,
       ...(rdApiKey ? { rdApiKey } : {}),
       ...(torBoxApiKey ? { torBoxApiKey } : {}),
