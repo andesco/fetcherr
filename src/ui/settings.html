@@ -298,16 +298,16 @@
   <!-- MDBList -->
   <section class="section" id="mdblist">
     <div class="section-title">MDBList</div>
-    <div class="field-note trakt-list-note">Public MDBList URLs synced with your library. Use the ⋮ menu on each list to control how it appears: as a folder, collection, or browse-only (visible in Infuse but excluded from the main library).</div>
+    <div class="field-note trakt-list-note">Public MDBList URLs synced with Fetcherr. Use the ⋮ menu on each list to choose any combination of appearing in Movies/Shows, as a top-level Folder, and as a Collection.</div>
     <div class="btn-row trakt-list-actions">
       <a class="btn btn-sm" href="https://mdblist.com/toplists/" target="_blank" rel="noreferrer">Browse Top Lists</a>
     </div>
     <div class="field">
-      <label for="mdblistApiKey">API Key <span class="optional-tag">Optional</span> <span id="mdblistConfigState" class="config-state" hidden></span></label>
+      <label for="mdblistApiKey">API Key <span class="optional-tag">Required</span> <span id="mdblistConfigState" class="config-state" hidden></span></label>
       <div class="input-row">
         <input id="mdblistApiKey" type="password" placeholder="Enter your MDBList API key" oninput="setMdblistStoredStatus()">
       </div>
-      <div class="field-note">Required for lists with more than 48 items. Get your free key at <a href="https://mdblist.com/preferences/" target="_blank" rel="noreferrer">mdblist.com/preferences</a>.</div>
+      <div class="field-note">Required for reliable MDBList sync, including official lists and streaming charts. Get your free key at <a href="https://mdblist.com/preferences/" target="_blank" rel="noreferrer">mdblist.com/preferences</a>.</div>
     </div>
     <div class="field">
       <label>Lists</label>
@@ -394,6 +394,11 @@
         <label for="mdblistEditName">Name <span class="optional-tag">Optional</span></label>
         <input id="mdblistEditName" type="text" placeholder="Custom display name">
         <div class="field-note">Overrides the MDBList name in Infuse and VidHub.</div>
+      </div>
+      <div class="field">
+        <label for="mdblistEditMaxItems">Max Items <span class="optional-tag">Optional</span></label>
+        <input id="mdblistEditMaxItems" type="number" min="1" step="1" placeholder="Use global default">
+        <div class="field-note">Limits this list during sync. Leave blank to use the global MDBList cap.</div>
       </div>
     </div>
     <div class="modal-actions">
@@ -765,7 +770,68 @@
     } catch { return entry.url }
   }
 
-  const MDBLIST_MODE_LABELS = { library: 'Library', folder: 'Folder', collection: 'Collection', browse_only: 'Browse Only' }
+  const LIST_PRESENTATION_OPTIONS = [
+    ['includeInLibrary', 'Movies/Shows', 'Include items in the main Movies or Shows source.'],
+    ['showAsFolder', 'Folder', 'Show this list as a folder at the Fetch root.'],
+    ['showAsCollection', 'Collection', 'Show this list under Fetch → Collections.'],
+  ]
+  const LEGACY_LIST_PRESENTATIONS = {
+    library: { includeInLibrary: true, showAsFolder: false, showAsCollection: false },
+    folder: { includeInLibrary: true, showAsFolder: true, showAsCollection: false },
+    browse_only: { includeInLibrary: false, showAsFolder: true, showAsCollection: false },
+    collection: { includeInLibrary: true, showAsFolder: false, showAsCollection: true },
+  }
+
+  function listPresentation(entry) {
+    const legacy = entry?.mode && LEGACY_LIST_PRESENTATIONS[entry.mode]
+    return {
+      includeInLibrary: typeof entry?.includeInLibrary === 'boolean' ? entry.includeInLibrary : (legacy ? legacy.includeInLibrary : true),
+      showAsFolder: typeof entry?.showAsFolder === 'boolean' ? entry.showAsFolder : (legacy ? legacy.showAsFolder : false),
+      showAsCollection: typeof entry?.showAsCollection === 'boolean' ? entry.showAsCollection : (legacy ? legacy.showAsCollection : false),
+    }
+  }
+
+  function withListPresentation(entry) {
+    const { mode, ...rest } = entry || {}
+    return { ...rest, ...listPresentation(entry) }
+  }
+
+  function listPresentationChips(entry) {
+    const p = listPresentation(entry)
+    const chips = LIST_PRESENTATION_OPTIONS
+      .filter(([key]) => p[key])
+      .map(([key, label, title]) => `<span class="mdblist-mode-badge mdblist-mode-${key}" title="${_esc(title)}">${label}</span>`)
+    if (!chips.length) {
+      chips.push('<span class="mdblist-mode-badge mdblist-mode-disabled" title="This list is saved but is not currently used.">Disabled</span>')
+    }
+    return chips.join('')
+  }
+
+  function listPresentationMenu(kind, id, entry) {
+    const p = listPresentation(entry)
+    const rows = LIST_PRESENTATION_OPTIONS.map(([key, label, title]) => {
+      const next = p[key] ? 'false' : 'true'
+      const handler = kind === 'mdblist'
+        ? `toggleMdblistPresentation(${id}, '${key}', ${next})`
+        : `toggleTraktPresentation('${_esc(String(id))}', '${key}', ${next})`
+      return `<div class="mdblist-menu-check" role="checkbox" aria-checked="${p[key] ? 'true' : 'false'}" tabindex="0" title="${_esc(title)}" onclick="event.preventDefault(); event.stopPropagation(); ${handler}" onkeydown="if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); ${handler} }">
+        <input type="checkbox" tabindex="-1" ${p[key] ? 'checked' : ''} aria-hidden="true">
+        <span>${label}</span>
+      </div>`
+    }).join('')
+    return `<div class="mdblist-menu-heading">Show list as:</div>${rows}`
+  }
+
+  function normalizeMdblistUrl(value) {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    try {
+      const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
+      const host = url.hostname.toLowerCase()
+      if (host !== 'mdblist.com' && host !== 'www.mdblist.com') return raw
+      return `https://mdblist.com${url.pathname.replace(/\/+$/, '')}${url.search}`
+    } catch { return raw }
+  }
 
   function renderMdblistRows() {
     const container = document.getElementById('mdblistRows')
@@ -774,20 +840,15 @@
       return
     }
     container.innerHTML = mdblistEntries.map((entry, idx) => {
-      const mode = entry.mode || 'library'
-      const badge = mode !== 'library' ? `<span class="mdblist-mode-badge mdblist-mode-${mode}">${MDBLIST_MODE_LABELS[mode]}</span>` : ''
       const isOpen = mdblistOpenMenuIdx === idx
       return `<div class="mdblist-row">
-        <div class="mdblist-name">${_esc(mdblistDisplayName(entry))}${badge}</div>
+        <div class="mdblist-name">${_esc(mdblistDisplayName(entry))}${listPresentationChips(entry)}</div>
         <div class="mdblist-row-menu${isOpen ? ' open' : ''}" id="mdblist-menu-${idx}">
           <button type="button" class="mdblist-menu-trigger btn-icon" title="List options" aria-label="List options" onclick="toggleMdblistMenu(${idx}, event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
           </button>
           <div class="mdblist-menu-dropdown">
-            <div class="mdblist-menu-item${mode === 'library' ? ' checked' : ''}" onclick="setMdblistMode(${idx}, 'library')">Library</div>
-            <div class="mdblist-menu-item${mode === 'folder' ? ' checked' : ''}" onclick="setMdblistMode(${idx}, 'folder')">Add as Folder</div>
-            <div class="mdblist-menu-item${mode === 'collection' ? ' checked' : ''}" onclick="setMdblistMode(${idx}, 'collection')">Add as Collection</div>
-            <div class="mdblist-menu-item${mode === 'browse_only' ? ' checked' : ''}" onclick="setMdblistMode(${idx}, 'browse_only')">Browse Only</div>
+            ${listPresentationMenu('mdblist', idx, entry)}
             <div class="mdblist-menu-divider"></div>
             <div class="mdblist-menu-item" onclick="openMdblistEditModal(${idx}); closeMdblistMenus()">Edit</div>
             <div class="mdblist-menu-item mdblist-menu-danger" onclick="removeMdblistEntry(${idx})">Remove</div>
@@ -807,9 +868,8 @@
     if (mdblistOpenMenuIdx !== -1) { mdblistOpenMenuIdx = -1; renderMdblistRows() }
   }
 
-  function setMdblistMode(idx, mode) {
-    mdblistEntries = mdblistEntries.map((e, i) => i === idx ? { ...e, mode: mode === 'library' ? undefined : mode } : e)
-    mdblistOpenMenuIdx = -1
+  function toggleMdblistPresentation(idx, key, enabled) {
+    mdblistEntries = mdblistEntries.map((e, i) => i === idx ? { ...withListPresentation(e), [key]: enabled } : e)
     renderMdblistRows()
     _markDirty()
   }
@@ -834,7 +894,7 @@
 
   function addMdblistEntry() {
     const input = document.getElementById('mdblistAddInput')
-    const url = input.value.trim()
+    const url = normalizeMdblistUrl(input.value)
     if (!url) return
     if (!url.includes('mdblist.com/lists/')) {
       showOut('Enter a valid MDBList list URL (mdblist.com/lists/…)', 'error')
@@ -866,8 +926,10 @@
     const entry = mdblistEntries[idx]
     document.getElementById('mdblistEditUrl').value = entry.url
     document.getElementById('mdblistEditName').value = entry.name || ''
+    document.getElementById('mdblistEditMaxItems').value = entry.maxItems || ''
     document.getElementById('mdblistEditModalBackdrop').classList.add('open')
     document.addEventListener('keydown', onMdblistEditModalKey)
+    document.getElementById('mdblistEditUrl').focus()
   }
 
   function closeMdblistEditModal(e) {
@@ -882,17 +944,27 @@
   }
 
   function saveMdblistEdit() {
-    const url = document.getElementById('mdblistEditUrl').value.trim()
+    const url = normalizeMdblistUrl(document.getElementById('mdblistEditUrl').value)
     const name = document.getElementById('mdblistEditName').value.trim()
+    const maxItemsRaw = document.getElementById('mdblistEditMaxItems').value.trim()
+    const maxItems = maxItemsRaw ? Number(maxItemsRaw) : 0
     if (!url) return
     if (!url.includes('mdblist.com/lists/')) {
       showOut('Enter a valid MDBList list URL (mdblist.com/lists/…)', 'error')
       return
     }
+    if (mdblistEntries.some((e, i) => i !== mdblistEditIdx && e.url === url)) {
+      showOut('This list is already added.', 'error')
+      return
+    }
+    if (maxItemsRaw && (!Number.isInteger(maxItems) || maxItems <= 0)) {
+      showOut('Max Items must be a positive number.', 'error')
+      return
+    }
     if (mdblistEditIdx >= 0 && mdblistEditIdx < mdblistEntries.length) {
       const existing = mdblistEntries[mdblistEditIdx]
       mdblistEntries = mdblistEntries.map((e, i) => i === mdblistEditIdx
-        ? { url, ...(name ? { name } : {}), ...(existing.mode ? { mode: existing.mode } : {}) }
+        ? { url, ...(name ? { name } : {}), ...listPresentation(existing), ...(maxItemsRaw ? { maxItems } : {}) }
         : e)
       renderMdblistRows()
       _markDirty()
@@ -956,31 +1028,41 @@
     document.getElementById('traktWatchlistShows').checked = d.traktWatchlistShows !== false
     document.getElementById('traktWatchHistory').checked = d.traktWatchHistory === true
     if (d.traktListModes && typeof d.traktListModes === 'object') {
-      traktListModes = { ...d.traktListModes }
+      traktListModes = Object.fromEntries(Object.entries(d.traktListModes).map(([slug, value]) => [slug, listPresentation(value)]))
     } else {
-      // Migrate legacy traktFolders/traktCollections → per-list modes
+      // Migrate legacy traktFolders/traktCollections → per-list presentations.
       traktListModes = {}
       if (d.traktCollections) {
-        for (const slug of (Array.isArray(d.traktLists) ? d.traktLists : [])) traktListModes[slug] = 'collection'
+        for (const slug of (Array.isArray(d.traktLists) ? d.traktLists : [])) traktListModes[slug] = { includeInLibrary: true, showAsFolder: false, showAsCollection: true }
       } else if (d.traktFolders === true) {
-        for (const slug of (Array.isArray(d.traktLists) ? d.traktLists : [])) traktListModes[slug] = 'folder'
+        for (const slug of (Array.isArray(d.traktLists) ? d.traktLists : [])) traktListModes[slug] = { includeInLibrary: true, showAsFolder: true, showAsCollection: false }
       } else if (Array.isArray(d.traktFolders)) {
         for (const slug of (Array.isArray(d.traktLists) ? d.traktLists : [])) {
-          if (d.traktFolders.some(s => slug === s || slug.endsWith('/' + s))) traktListModes[slug] = 'folder'
+          if (d.traktFolders.some(s => slug === s || slug.endsWith('/' + s))) traktListModes[slug] = { includeInLibrary: true, showAsFolder: true, showAsCollection: false }
         }
       }
     }
     document.getElementById('torBoxCleanupEnabled').checked = d.torBoxCleanupEnabled !== false
     setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
-    mdblistEntries = Array.isArray(d.mdblistLists) ? d.mdblistLists.map(e => {
-      // Migrate legacy mdblistFolders setting: if no mode set but entry's path is in mdblistFolders, mark as folder
-      if (!e.mode && Array.isArray(d.mdblistFolders)) {
-        const p = mdblistPathFromUrl(e.url)
-        if (d.mdblistFolders.some(s => p === s || p.endsWith('/' + s))) return { ...e, mode: 'folder' }
-      }
-      if (!e.mode && d.mdblistFolders === true) return { ...e, mode: 'folder' }
-      return e
-    }) : []
+    mdblistEntries = Array.isArray(d.mdblistLists)
+      ? d.mdblistLists.map(entry => ({
+          ...entry,
+          url: normalizeMdblistUrl(entry.url),
+        })).filter(entry => entry.url).map(entry => {
+          let e = withListPresentation(entry)
+          const hasExplicitPresentation = typeof entry.includeInLibrary === 'boolean'
+            || typeof entry.showAsFolder === 'boolean'
+            || typeof entry.showAsCollection === 'boolean'
+            || !!entry.mode
+          // Migrate legacy mdblistFolders setting when no explicit list presentation exists.
+          if (!hasExplicitPresentation && Array.isArray(d.mdblistFolders)) {
+            const p = mdblistPathFromUrl(e.url)
+            if (d.mdblistFolders.some(s => p === s || p.endsWith('/' + s))) e = { ...e, showAsFolder: true }
+          }
+          if (!hasExplicitPresentation && d.mdblistFolders === true) e = { ...e, showAsFolder: true }
+          return e
+        })
+      : []
     renderMdblistRows()
     selectedTraktLists = Array.isArray(d.traktLists) ? d.traktLists : []
     managedUsers = Array.isArray(d.users) ? d.users.map(user => ({ ...user, pendingPassword: '' })) : []
@@ -1259,14 +1341,13 @@
     const el = document.getElementById('traktLists')
     if (!traktListsData.length) return
     el.innerHTML = traktListsData.map(list => {
-      const mode = traktListModes[list.slug] || 'library'
-      const badge = mode !== 'library' ? `<span class="mdblist-mode-badge mdblist-mode-${mode}">${MDBLIST_MODE_LABELS[mode]}</span>` : ''
+      const presentation = listPresentation(traktListModes[list.slug] || {})
       const isOpen = traktOpenMenuSlug === list.slug
       const safeId = list.slug.replace(/\//g, '-')
       return `<label class="check-item">
         <input type="checkbox" value="${_esc(list.slug)}" ${selectedTraktLists.includes(list.slug) ? 'checked' : ''} onchange="toggleTraktList(this)">
         <div class="check-meta">
-          <div class="check-title">${_esc(list.name)}${badge}</div>
+          <div class="check-title">${_esc(list.name)}${listPresentationChips(presentation)}</div>
           <div class="check-slug">${_esc(list.slug)}</div>
         </div>
         <div class="mdblist-row-menu${isOpen ? ' open' : ''}" id="trakt-menu-${safeId}">
@@ -1274,10 +1355,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
           </button>
           <div class="mdblist-menu-dropdown">
-            <div class="mdblist-menu-item${mode === 'library' ? ' checked' : ''}" onclick="event.preventDefault(); event.stopPropagation(); setTraktListMode('${_esc(list.slug)}', 'library')">Library</div>
-            <div class="mdblist-menu-item${mode === 'folder' ? ' checked' : ''}" onclick="event.preventDefault(); event.stopPropagation(); setTraktListMode('${_esc(list.slug)}', 'folder')">Add as Folder</div>
-            <div class="mdblist-menu-item${mode === 'collection' ? ' checked' : ''}" onclick="event.preventDefault(); event.stopPropagation(); setTraktListMode('${_esc(list.slug)}', 'collection')">Add as Collection</div>
-            <div class="mdblist-menu-item${mode === 'browse_only' ? ' checked' : ''}" onclick="event.preventDefault(); event.stopPropagation(); setTraktListMode('${_esc(list.slug)}', 'browse_only')">Browse Only</div>
+            ${listPresentationMenu('trakt', list.slug, presentation)}
           </div>
         </div>
       </label>`
@@ -1314,9 +1392,8 @@
     renderTraktLists()
   }
 
-  function setTraktListMode(slug, mode) {
-    if (mode === 'library') { delete traktListModes[slug] } else { traktListModes[slug] = mode }
-    traktOpenMenuSlug = null
+  function toggleTraktPresentation(slug, key, enabled) {
+    traktListModes[slug] = { ...listPresentation(traktListModes[slug] || {}), [key]: enabled }
     renderTraktLists()
     _markDirty()
   }

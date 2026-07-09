@@ -1900,6 +1900,25 @@ label {
   flex-shrink: 0;
 }
 
+.mdblist-row-actions .folder-toggle,
+.mdblist-row-actions .btn-icon,
+.mdblist-row-actions .btn-remove {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+}
+
+.mdblist-row-actions .btn-icon,
+.mdblist-row-actions .btn-remove {
+  padding: 0;
+}
+
+.mdblist-row-actions .btn-icon svg,
+.mdblist-row-actions .btn-remove svg {
+  width: 13px;
+  height: 13px;
+}
+
 .mdblist-add-row {
   display: flex;
   gap: 8px;
@@ -2063,6 +2082,7 @@ label {
 
 .trakt-list-actions {
   margin-top: 12px;
+  margin-bottom: 14px;
 }
 
 /* MDBList three-dot menu */
@@ -2106,6 +2126,7 @@ label {
   box-shadow: 0 4px 16px rgba(0, 0, 0, .3);
   z-index: 200;
   overflow: hidden;
+  text-transform: none;
 }
 
 .mdblist-row-menu.open .mdblist-menu-dropdown {
@@ -2123,6 +2144,36 @@ label {
 
 .mdblist-menu-item:hover {
   background: var(--accent-dim);
+}
+
+.mdblist-menu-heading {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: none;
+}
+
+.mdblist-menu-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+  text-transform: none;
+}
+
+.mdblist-menu-check:hover {
+  background: var(--accent-dim);
+}
+
+.mdblist-menu-check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
 }
 
 .mdblist-menu-item.checked::before {
@@ -2168,11 +2219,18 @@ label {
   color: #e8890c;
 }
 
+.mdblist-mode-disabled {
+  background: rgba(150, 150, 150, .16);
+  color: var(--muted);
+}
+
 @media (prefers-color-scheme: light) {
   .mdblist-mode-browse_only { background: rgba(255, 140, 0, .12); color: #c06000; }
+  .mdblist-mode-disabled { background: rgba(80, 80, 80, .08); color: #707070; }
 }
 
 :root[data-theme="light"] .mdblist-mode-browse_only { background: rgba(255, 140, 0, .12); color: #c06000; }
+:root[data-theme="light"] .mdblist-mode-disabled { background: rgba(80, 80, 80, .08); color: #707070; }
 
 .user-table-wrap {
   margin-top: 14px;

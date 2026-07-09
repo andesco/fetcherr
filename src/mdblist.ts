@@ -1,11 +1,11 @@
-import { config, type MdblistListEntry } from './config.js'
+import { config, normalizeListPresentation, presentationFromLegacyMode, type MdblistListEntry } from './config.js'
 import {
   hasAnySourceItem,
   listSourceKeys,
   pruneOrphanedMovies,
   pruneOrphanedShows,
   removeSourceKey,
-  replaceSourceItems,
+  replaceSourceItemsWithPositions,
   upsertManualShowSubscription,
   type MediaType,
 } from './db.js'
@@ -17,6 +17,7 @@ const MDBLIST_WEB_ORIGIN = 'https://mdblist.com'
 interface MdblistEntry {
   tmdbId: number
   mediaType: MediaType
+  rank?: number
 }
 
 interface MdblistFetchResult {
@@ -69,7 +70,7 @@ export function normalizeMdblistListUrl(value: string): string {
     throw new Error(`MDBList URL is missing a list path: ${raw}`)
   }
 
-  return `${MDBLIST_WEB_ORIGIN}/lists/${listPath}`
+  return `${MDBLIST_WEB_ORIGIN}/lists/${listPath}${parsed.search}`
 }
 
 export function normalizeMdblistListUrls(values: string[]): string[] {
@@ -95,7 +96,16 @@ export function normalizeMdblistEntries(entries: MdblistListEntry[]): MdblistLis
       const url = normalizeMdblistListUrl(entry.url)
       if (!seen.has(url)) {
         seen.add(url)
-        result.push({ url, ...(entry.name?.trim() ? { name: entry.name.trim() } : {}) })
+        const hasPresentation = entry.includeInLibrary != null || entry.showAsFolder != null || entry.showAsCollection != null
+        const presentation = hasPresentation
+          ? normalizeListPresentation(entry)
+          : presentationFromLegacyMode(entry.mode)
+        result.push({
+          url,
+          ...(entry.name?.trim() ? { name: entry.name.trim() } : {}),
+          ...(presentation ? presentation : {}),
+          ...(Number.isFinite(Number(entry.maxItems)) && Number(entry.maxItems) > 0 ? { maxItems: Math.trunc(Number(entry.maxItems)) } : {}),
+        })
       }
     } catch { /* skip invalid URLs */ }
   }
@@ -199,14 +209,71 @@ function extractPublicListEntries(html: string): MdblistEntry[] {
 }
 
 interface MdblistApiItem {
+  id?: number
+  rank?: number
+  mediatype?: string
   ids?: { tmdb?: number }
 }
 
+type MdblistApiEndpoint = {
+  url: URL
+  responseKind: 'standard-list' | 'justwatch-chart'
+}
+
+function mdblistApiItemsRequest(listUrl: string, limit: number, offset: number, apiKey: string): MdblistApiEndpoint {
+  const normalized = normalizeMdblistListUrl(listUrl)
+  const input = new URL(normalized)
+  const parts = input.pathname.split('/').filter(Boolean)
+  const mediaMap: Record<string, MediaType> = {
+    movies: 'movie',
+    shows: 'show',
+  }
+
+  if (parts[0] !== 'lists') {
+    throw new Error('Unsupported MDBList URL')
+  }
+
+  if (parts[1] === 'official' && mediaMap[parts[2]]) {
+    const mediaType = mediaMap[parts[2]]
+    const slug = parts[3]
+    if (!slug) throw new Error('Unsupported MDBList official list URL')
+
+    if (slug === 'justwatch-streaming-charts') {
+      const output = new URL(`https://api.mdblist.com/justwatch/streaming-charts/${mediaType}`)
+      for (const name of ['locale', 'country', 'rank', 'period', 'provider', 'genre', 'subgenre', 'x']) {
+        const value = input.searchParams.get(name)
+        if (value !== null) output.searchParams.set(name, value)
+      }
+      if (!output.searchParams.has('x')) output.searchParams.set('x', '20')
+      output.searchParams.set('apikey', apiKey)
+      return { url: output, responseKind: 'justwatch-chart' }
+    }
+
+    const apiSlug = slug === 'streaming-charts' ? 'justwatch-streaming-charts' : slug
+    const output = new URL(`https://api.mdblist.com/lists/official/${apiSlug}/items`)
+    output.searchParams.set('limit', String(limit))
+    output.searchParams.set('offset', String(offset))
+    output.searchParams.set('mediatype', mediaType)
+    output.searchParams.set('apikey', apiKey)
+    return { url: output, responseKind: 'standard-list' }
+  }
+
+  if (parts.length === 3) {
+    const [, username, slug] = parts
+    const output = new URL(`https://api.mdblist.com/lists/${username}/${slug}/items`)
+    output.searchParams.set('limit', String(limit))
+    output.searchParams.set('offset', String(offset))
+    output.searchParams.set('apikey', apiKey)
+    return { url: output, responseKind: 'standard-list' }
+  }
+
+  throw new Error('Unsupported MDBList list URL')
+}
+
 async function fetchApiListEntries(listUrl: string, apiKey: string, maxEntries: number): Promise<MdblistFetchResult> {
-  const path = mdblistListPathFromUrl(listUrl)
   const entries: MdblistEntry[] = []
   const seen = new Set<string>()
-  const limit = 100
+  const limit = Math.max(1, Math.min(100, maxEntries))
   let offset = 0
   let capped = false
 
@@ -219,10 +286,10 @@ async function fetchApiListEntries(listUrl: string, apiKey: string, maxEntries: 
   }
 
   while (true) {
-    const url = `https://api.mdblist.com/lists/${path}/items?limit=${limit}&offset=${offset}&apikey=${encodeURIComponent(apiKey)}`
+    const request = mdblistApiItemsRequest(listUrl, limit, offset, apiKey)
     let res: Response
     try {
-      res = await fetch(url, {
+      res = await fetch(request.url, {
         headers: { 'User-Agent': 'fetcherr/1.0' },
         signal: AbortSignal.timeout(20_000),
       })
@@ -233,19 +300,29 @@ async function fetchApiListEntries(listUrl: string, apiKey: string, maxEntries: 
       const body = await res.text().catch(() => '')
       throw new Error(`MDBList API ${res.status}: ${body.slice(0, 200)}`)
     }
-    const data = await res.json() as { movies?: MdblistApiItem[]; shows?: MdblistApiItem[] }
+        const data = await res.json() as { movies?: MdblistApiItem[]; shows?: MdblistApiItem[]; results?: MdblistApiItem[]; media_type?: string }
+    if (request.responseKind === 'justwatch-chart') {
+      const mediaType: MediaType = data.media_type === 'show' ? 'show' : 'movie'
+      for (const item of data.results ?? []) {
+        const tmdbId = item.ids?.tmdb ?? item.id
+        if (!tmdbId || !Number.isFinite(tmdbId) || tmdbId <= 0) continue
+        addEntry({ tmdbId, mediaType, rank: item.rank })
+      }
+      break
+    }
+
     const pageMovies = data.movies ?? []
     const pageShows = data.shows ?? []
 
     for (const item of pageMovies) {
-      const tmdbId = item.ids?.tmdb
+      const tmdbId = item.ids?.tmdb ?? item.id
       if (!tmdbId || !Number.isFinite(tmdbId) || tmdbId <= 0) continue
-      addEntry({ tmdbId, mediaType: 'movie' })
+      addEntry({ tmdbId, mediaType: 'movie', rank: item.rank })
     }
     for (const item of pageShows) {
-      const tmdbId = item.ids?.tmdb
+      const tmdbId = item.ids?.tmdb ?? item.id
       if (!tmdbId || !Number.isFinite(tmdbId) || tmdbId <= 0) continue
-      addEntry({ tmdbId, mediaType: 'show' })
+      addEntry({ tmdbId, mediaType: 'show', rank: item.rank })
     }
 
     if (entries.length >= maxEntries) break
@@ -286,30 +363,32 @@ export async function syncMdblistList(listUrl: string): Promise<MdblistListSyncR
   }
 
   console.log(`mdblist: syncing ${normalizedUrl}`)
-  const maxItems = Math.max(1, config.mdblistMaxItems)
+  const configuredEntry = config.mdblistLists.find(entry => normalizeMdblistListUrl(entry.url) === normalizedUrl)
+  const maxItems = Math.max(1, configuredEntry?.maxItems ?? config.mdblistMaxItems)
   const { entries, capped, discoveredTotal } = await fetchMdblistEntries(normalizedUrl, maxItems)
   if (capped) {
     const totalLabel = discoveredTotal ? `${discoveredTotal} public TMDB links` : `at least ${entries.length} API items`
     console.warn(`mdblist: ${normalizedUrl} has ${totalLabel}; importing first ${entries.length}. Set MDBLIST_MAX_ITEMS to adjust this cap.`)
   } else {
-    console.log(`mdblist: ${normalizedUrl} has ${entries.length} public TMDB links`)
+    console.log(`mdblist: ${normalizedUrl} has ${entries.length} items`)
   }
 
   let movies = 0
   let shows = 0
-  const movieTmdbIds: number[] = []
-  const showTmdbIds: number[] = []
+  const movieSourceItems: Array<{ tmdbId: number; sourcePosition: number }> = []
+  const showSourceItems: Array<{ tmdbId: number; sourcePosition: number }> = []
 
-  for (const entry of entries) {
+  for (const [idx, entry] of entries.entries()) {
+    const sourcePosition = entry.rank && Number.isFinite(entry.rank) && entry.rank > 0 ? Math.trunc(entry.rank) : idx + 1
     if (entry.mediaType === 'movie') {
-      movieTmdbIds.push(entry.tmdbId)
+      movieSourceItems.push({ tmdbId: entry.tmdbId, sourcePosition })
       const movie = await fetchMovieByTmdbId(entry.tmdbId)
       if (movie) movies++
       continue
     }
 
     const isNewToLibrary = !hasAnySourceItem('show', entry.tmdbId)
-    showTmdbIds.push(entry.tmdbId)
+    showSourceItems.push({ tmdbId: entry.tmdbId, sourcePosition })
     const show = await fetchShowByTmdbId(entry.tmdbId)
     if (show && isNewToLibrary && config.showAddDefaultMode === 'latest') {
       upsertManualShowSubscription(entry.tmdbId, 'latest', 0)
@@ -317,8 +396,8 @@ export async function syncMdblistList(listUrl: string): Promise<MdblistListSyncR
     if (show) shows++
   }
 
-  const removedMovies = replaceSourceItems(sourceKey, 'movie', movieTmdbIds)
-  const removedShows = replaceSourceItems(sourceKey, 'show', showTmdbIds)
+  const removedMovies = replaceSourceItemsWithPositions(sourceKey, 'movie', movieSourceItems)
+  const removedShows = replaceSourceItemsWithPositions(sourceKey, 'show', showSourceItems)
   const prunedMovies = pruneOrphanedMovies(removedMovies)
   const prunedShows = pruneOrphanedShows(removedShows)
 
