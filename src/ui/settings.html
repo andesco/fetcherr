@@ -303,11 +303,11 @@
       <a class="btn btn-sm" href="https://mdblist.com/toplists/" target="_blank" rel="noreferrer">Browse Top Lists</a>
     </div>
     <div class="field">
-      <label for="mdblistApiKey">API Key <span class="optional-tag">Optional</span> <span id="mdblistConfigState" class="config-state" hidden></span></label>
+      <label for="mdblistApiKey">API Key <span class="optional-tag">Required</span> <span id="mdblistConfigState" class="config-state" hidden></span></label>
       <div class="input-row">
         <input id="mdblistApiKey" type="password" placeholder="Enter your MDBList API key" oninput="setMdblistStoredStatus()">
       </div>
-      <div class="field-note">Required for lists with more than 48 items. Get your free key at <a href="https://mdblist.com/preferences/" target="_blank" rel="noreferrer">mdblist.com/preferences</a>.</div>
+      <div class="field-note">Required for reliable MDBList sync, including official lists and streaming charts. Get your free key at <a href="https://mdblist.com/preferences/" target="_blank" rel="noreferrer">mdblist.com/preferences</a>.</div>
     </div>
     <div class="field">
       <label>Lists</label>
@@ -394,6 +394,11 @@
         <label for="mdblistEditName">Name <span class="optional-tag">Optional</span></label>
         <input id="mdblistEditName" type="text" placeholder="Custom display name">
         <div class="field-note">Overrides the MDBList name in Infuse and VidHub.</div>
+      </div>
+      <div class="field">
+        <label for="mdblistEditMaxItems">Max Items <span class="optional-tag">Optional</span></label>
+        <input id="mdblistEditMaxItems" type="number" min="1" step="1" placeholder="Use global default">
+        <div class="field-note">Limits this list during sync. Leave blank to use the global MDBList cap.</div>
       </div>
     </div>
     <div class="modal-actions">
@@ -767,6 +772,17 @@
 
   const MDBLIST_MODE_LABELS = { library: 'Library', folder: 'Folder', collection: 'Collection', browse_only: 'Browse Only' }
 
+  function normalizeMdblistUrl(value) {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    try {
+      const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
+      const host = url.hostname.toLowerCase()
+      if (host !== 'mdblist.com' && host !== 'www.mdblist.com') return raw
+      return `https://mdblist.com${url.pathname.replace(/\/+$/, '')}${url.search}`
+    } catch { return raw }
+  }
+
   function renderMdblistRows() {
     const container = document.getElementById('mdblistRows')
     if (!mdblistEntries.length) {
@@ -834,7 +850,7 @@
 
   function addMdblistEntry() {
     const input = document.getElementById('mdblistAddInput')
-    const url = input.value.trim()
+    const url = normalizeMdblistUrl(input.value)
     if (!url) return
     if (!url.includes('mdblist.com/lists/')) {
       showOut('Enter a valid MDBList list URL (mdblist.com/lists/…)', 'error')
@@ -866,8 +882,10 @@
     const entry = mdblistEntries[idx]
     document.getElementById('mdblistEditUrl').value = entry.url
     document.getElementById('mdblistEditName').value = entry.name || ''
+    document.getElementById('mdblistEditMaxItems').value = entry.maxItems || ''
     document.getElementById('mdblistEditModalBackdrop').classList.add('open')
     document.addEventListener('keydown', onMdblistEditModalKey)
+    document.getElementById('mdblistEditUrl').focus()
   }
 
   function closeMdblistEditModal(e) {
@@ -882,17 +900,27 @@
   }
 
   function saveMdblistEdit() {
-    const url = document.getElementById('mdblistEditUrl').value.trim()
+    const url = normalizeMdblistUrl(document.getElementById('mdblistEditUrl').value)
     const name = document.getElementById('mdblistEditName').value.trim()
+    const maxItemsRaw = document.getElementById('mdblistEditMaxItems').value.trim()
+    const maxItems = maxItemsRaw ? Number(maxItemsRaw) : 0
     if (!url) return
     if (!url.includes('mdblist.com/lists/')) {
       showOut('Enter a valid MDBList list URL (mdblist.com/lists/…)', 'error')
       return
     }
+    if (mdblistEntries.some((e, i) => i !== mdblistEditIdx && e.url === url)) {
+      showOut('This list is already added.', 'error')
+      return
+    }
+    if (maxItemsRaw && (!Number.isInteger(maxItems) || maxItems <= 0)) {
+      showOut('Max Items must be a positive number.', 'error')
+      return
+    }
     if (mdblistEditIdx >= 0 && mdblistEditIdx < mdblistEntries.length) {
       const existing = mdblistEntries[mdblistEditIdx]
       mdblistEntries = mdblistEntries.map((e, i) => i === mdblistEditIdx
-        ? { url, ...(name ? { name } : {}), ...(existing.mode ? { mode: existing.mode } : {}) }
+        ? { url, ...(name ? { name } : {}), ...(existing.mode ? { mode: existing.mode } : {}), ...(maxItemsRaw ? { maxItems } : {}) }
         : e)
       renderMdblistRows()
       _markDirty()
@@ -972,15 +1000,20 @@
     }
     document.getElementById('torBoxCleanupEnabled').checked = d.torBoxCleanupEnabled !== false
     setSecretPlaceholder('mdblistApiKey', hasStoredMdblistApiKey, 'Enter your MDBList API key')
-    mdblistEntries = Array.isArray(d.mdblistLists) ? d.mdblistLists.map(e => {
-      // Migrate legacy mdblistFolders setting: if no mode set but entry's path is in mdblistFolders, mark as folder
-      if (!e.mode && Array.isArray(d.mdblistFolders)) {
-        const p = mdblistPathFromUrl(e.url)
-        if (d.mdblistFolders.some(s => p === s || p.endsWith('/' + s))) return { ...e, mode: 'folder' }
-      }
-      if (!e.mode && d.mdblistFolders === true) return { ...e, mode: 'folder' }
-      return e
-    }) : []
+    mdblistEntries = Array.isArray(d.mdblistLists)
+      ? d.mdblistLists.map(entry => ({
+          ...entry,
+          url: normalizeMdblistUrl(entry.url),
+        })).filter(entry => entry.url).map(e => {
+          // Migrate legacy mdblistFolders setting: if no mode set but entry's path is in mdblistFolders, mark as folder
+          if (!e.mode && Array.isArray(d.mdblistFolders)) {
+            const p = mdblistPathFromUrl(e.url)
+            if (d.mdblistFolders.some(s => p === s || p.endsWith('/' + s))) return { ...e, mode: 'folder' }
+          }
+          if (!e.mode && d.mdblistFolders === true) return { ...e, mode: 'folder' }
+          return e
+        })
+      : []
     renderMdblistRows()
     selectedTraktLists = Array.isArray(d.traktLists) ? d.traktLists : []
     managedUsers = Array.isArray(d.users) ? d.users.map(user => ({ ...user, pendingPassword: '' })) : []

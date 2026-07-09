@@ -48,6 +48,7 @@ export interface MdblistListEntry {
   url: string
   name?: string
   mode?: MdblistListMode
+  maxItems?: number
 }
 
 const MDBLIST_MODES = new Set<string>(['library', 'folder', 'collection', 'browse_only'])
@@ -65,6 +66,7 @@ export function parseMdblistLists(value: string): MdblistListEntry[] {
             url: String(e.url).trim(),
             ...(e.name && String(e.name).trim() ? { name: String(e.name).trim() } : {}),
             ...(typeof e.mode === 'string' && MDBLIST_MODES.has(e.mode) ? { mode: e.mode as MdblistListMode } : {}),
+            ...(Number.isFinite(Number(e.maxItems)) && Number(e.maxItems) > 0 ? { maxItems: Math.trunc(Number(e.maxItems)) } : {}),
           }))
           .filter(e => e.url)
       }

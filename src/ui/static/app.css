@@ -1900,6 +1900,25 @@ label {
   flex-shrink: 0;
 }
 
+.mdblist-row-actions .folder-toggle,
+.mdblist-row-actions .btn-icon,
+.mdblist-row-actions .btn-remove {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+}
+
+.mdblist-row-actions .btn-icon,
+.mdblist-row-actions .btn-remove {
+  padding: 0;
+}
+
+.mdblist-row-actions .btn-icon svg,
+.mdblist-row-actions .btn-remove svg {
+  width: 13px;
+  height: 13px;
+}
+
 .mdblist-add-row {
   display: flex;
   gap: 8px;

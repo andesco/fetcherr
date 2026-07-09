@@ -957,11 +957,15 @@ export async function uiRoutes(app: FastifyInstance) {
         const MODES = new Set(['library', 'folder', 'collection', 'browse_only'])
         const raw = (body.mdblistLists as unknown[])
           .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
-          .map(v => ({
-            url: String(v.url).trim(),
-            ...(v.name && String(v.name).trim() ? { name: String(v.name).trim() } : {}),
-            ...(typeof v.mode === 'string' && MODES.has(v.mode) ? { mode: v.mode as 'library' | 'folder' | 'collection' | 'browse_only' } : {}),
-          }))
+          .map(v => {
+            const maxItems = Number(v.maxItems)
+            return {
+              url: String(v.url).trim(),
+              ...(v.name && String(v.name).trim() ? { name: String(v.name).trim() } : {}),
+              ...(typeof v.mode === 'string' && MODES.has(v.mode) ? { mode: v.mode as 'library' | 'folder' | 'collection' | 'browse_only' } : {}),
+              ...(Number.isFinite(maxItems) && maxItems > 0 ? { maxItems: Math.trunc(maxItems) } : {}),
+            }
+          })
         const entries = normalizeMdblistEntries(raw)
         setSetting('mdblistLists', JSON.stringify(entries))
         config.mdblistLists = entries

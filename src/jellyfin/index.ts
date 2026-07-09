@@ -708,7 +708,7 @@ function mdblistCollectionItems(user: AppUser) {
     .map(e => buildMdblistCollectionItem(e, mdblistFolderMembers(user, e.url).length))
 }
 
-type CollectionMember = { mediaType: 'movie' | 'show'; tmdbId: number }
+type CollectionMember = { mediaType: 'movie' | 'show'; tmdbId: number; sourcePosition?: number; syncedAt?: string }
 type TraktCollectionItem = ReturnType<typeof buildTraktCollectionItem>
 type TraktCollectionSummary = { slug: string; members: CollectionMember[]; item: TraktCollectionItem }
 
@@ -740,6 +740,13 @@ function mdblistFolderSourceKey(listUrl: string): string {
   return `mdblist:list:${mdblistListPathFromUrl(listUrl)}`
 }
 
+function dateCreatedForSourcePosition(syncedAt: string | undefined, sourcePosition: number | undefined): string | undefined {
+  if (!sourcePosition || sourcePosition <= 0) return syncedAt
+  const baseMs = Date.parse(syncedAt ?? '')
+  if (!Number.isFinite(baseMs)) return syncedAt
+  return new Date(baseMs - ((sourcePosition - 1) * 1000)).toISOString()
+}
+
 function mdblistFolderMembers(user: AppUser, listUrl: string): CollectionMember[] {
   return listSourceItems(mdblistFolderSourceKey(listUrl)).filter(item => {
     if (isLibraryItemHidden(item.mediaType, item.tmdbId)) return false
@@ -752,19 +759,49 @@ function mdblistFolderMembers(user: AppUser, listUrl: string): CollectionMember[
   })
 }
 
-async function mdblistFolderContents(listUrl: string, user: AppUser) {
+function sortMdblistFolderItems<T extends Record<string, unknown>>(items: T[], sortBy?: string, sortOrder?: string): T[] {
+  const normalizedSort = (sortBy ?? '').split(',')[0].trim().toLowerCase()
+  const normalizedOrder = (sortOrder ?? '').split(',')[0].trim().toLowerCase()
+  const direction = normalizedOrder === 'ascending' || normalizedOrder === 'asc' ? 1 : -1
+  const compareStrings = (a: unknown, b: unknown) => String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' })
+  const compareNumbers = (a: unknown, b: unknown) => (Number(a ?? 0) || 0) - (Number(b ?? 0) || 0)
+
+  return [...items].sort((a, b) => {
+    if (['sortname', 'name'].includes(normalizedSort)) return compareStrings(a.SortName ?? a.Name, b.SortName ?? b.Name) * direction
+    if (['communityrating', 'rating', 'imdbrating'].includes(normalizedSort)) return compareNumbers(a.CommunityRating, b.CommunityRating) * direction
+    if (['officialrating', 'parentalrating'].includes(normalizedSort)) return compareStrings(a.OfficialRating, b.OfficialRating) * direction
+    if (['premieredate', 'releasedate', 'productionyear'].includes(normalizedSort)) return compareStrings(a.PremiereDate ?? a.ProductionYear, b.PremiereDate ?? b.ProductionYear) * direction
+    if (['datecreated', 'dateshowadded', 'dateadded', 'addeddate'].includes(normalizedSort)) return compareStrings(a.DateCreated, b.DateCreated) * direction
+    if (['runtime', 'runtimeticks'].includes(normalizedSort)) return compareNumbers(a.RunTimeTicks, b.RunTimeTicks) * direction
+    return compareNumbers(a.SourcePosition, b.SourcePosition) || compareStrings(a.SortName ?? a.Name, b.SortName ?? b.Name)
+  })
+}
+
+async function mdblistFolderContents(listUrl: string, user: AppUser, sortBy?: string, sortOrder?: string) {
   const members = mdblistFolderMembers(user, listUrl)
-  const items = []
+  const items: Array<Record<string, unknown>> = []
   for (const member of members) {
     if (member.mediaType === 'movie') {
       const movie = getMovieByTmdbId(member.tmdbId)
-      if (movie && canUserAccessMovie(user, movie)) items.push(movieToItem(movie, user.id))
+      if (movie && canUserAccessMovie(user, movie)) {
+        items.push({
+          ...movieToItem(movie, user.id),
+          DateCreated: dateCreatedForSourcePosition(member.syncedAt, member.sourcePosition),
+          SourcePosition: member.sourcePosition ?? 0,
+        })
+      }
       continue
     }
     const show = getShowByTmdbId(member.tmdbId) ?? await fetchShowByTmdbId(member.tmdbId)
-    if (show && canUserAccessShow(user, show)) items.push(showToSeriesItem(show, user.id))
+    if (show && canUserAccessShow(user, show)) {
+      items.push({
+        ...showToSeriesItem(show, user.id),
+        DateCreated: dateCreatedForSourcePosition(member.syncedAt, member.sourcePosition),
+        SourcePosition: member.sourcePosition ?? 0,
+      })
+    }
   }
-  return items.sort((a, b) => String(a.SortName ?? a.Name ?? '').localeCompare(String(b.SortName ?? b.Name ?? '')))
+  return sortMdblistFolderItems(items, sortBy, sortOrder)
 }
 
 function buildMdblistFolderItem(listUrl: string, count: number) {
@@ -2493,7 +2530,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
 
     const mdblistUrl = mdblistFolderUrlForId(ParentId)
     if (mdblistUrl) {
-      const items = await mdblistFolderContents(mdblistUrl, user)
+      const items = await mdblistFolderContents(mdblistUrl, user, SortBy, SortOrder)
       return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
 
