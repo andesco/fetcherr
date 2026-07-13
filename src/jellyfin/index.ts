@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
+import { createReadStream, existsSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { config, type ListFoldersSetting } from '../config.js'
 import {
   listMovies, countMovies, getMovieByTmdbId,
@@ -44,6 +46,11 @@ const SHOWS_FOLDER_ID  = 'a0000000-0000-4000-8000-000000000002'
 const COLLECTIONS_FOLDER_ID = 'a0000000-0000-4000-8007-000000000001'
 const SEARCH_DISABLED_ITEM_ID = 'a0000000-0000-4000-800a-000000000001'
 const SEARCH_DISABLED_RUNTIME_TICKS = 60 * 10_000_000
+const SYNC_ITEM_ID = 'a0000000-0000-4000-800b-000000000001'
+const SYNC_RUNTIME_TICKS = 4 * 10_000_000
+const SYNC_PLAY_PATH = '/play/fetcherr-sync'
+const SYNC_ARTWORK_TAG = 'fetcherr-sync-v4'
+const SYNC_VIDEO_SIZE_BYTES = 62_856
 const SERVER_GUID      = 'a0000000-0000-0000-0000-000000000001'
 const SEARCH_SERVER_GUID = 'a0000000-0000-0000-0000-00000000f001'
 // Keep old name as alias so existing code still compiles
@@ -600,7 +607,29 @@ async function sendImageUrl(
   return reply.send(proxied.buffer)
 }
 
+function localAssetPath(filename: string): string | null {
+  const candidates = [
+    join(process.cwd(), 'src/assets', filename),
+    join(process.cwd(), 'dist/assets', filename),
+    join(process.cwd(), 'assets', filename),
+  ]
+  return candidates.find(existsSync) ?? null
+}
+
+function sendLocalPng(reply: FastifyReply, filename: string) {
+  const path = localAssetPath(filename)
+  if (!path) return reply.code(404).send()
+  const { size } = statSync(path)
+  reply.header('Cache-Control', 'public, max-age=31536000, immutable')
+  reply.header('ETag', `"${SYNC_ARTWORK_TAG}"`)
+  reply.header('Content-Length', String(size))
+  reply.type('image/png')
+  return reply.send(createReadStream(path))
+}
+
 function runtimeTicksForItem(itemId: string): number | null {
+  if (itemId === SYNC_ITEM_ID) return SYNC_RUNTIME_TICKS
+
   const epRef = idToEpisode(itemId)
   if (epRef) {
     const episode = getEpisodesForSeason(epRef.showTmdbId, epRef.seasonNum)
@@ -1080,6 +1109,38 @@ function movieToItem(m: Movie, userId = DEFAULT_ADMIN_USER_ID) {
     ParentId:           FOLDER_ID,
     ProviderIds:        { Imdb: m.imdbId || undefined, Tmdb: String(m.tmdbId) },
     UserData:           userDataForItem(id, ud, runtimeTicks),
+  }
+}
+
+function syncItem(userId = DEFAULT_ADMIN_USER_ID) {
+  const ud = getUserData(SYNC_ITEM_ID, userId)
+  return {
+    Id:                 SYNC_ITEM_ID,
+    ServerId:           SERVER_GUID,
+    Name:               'Sync',
+    SortName:           'zzzz sync',
+    Type:               'Movie',
+    MediaType:          'Video',
+    VideoType:          'VideoFile',
+    LocationType:       'FileSystem',
+    PlayAccess:         'Full',
+    IsPlayable:         true,
+    CanDelete:          false,
+    CanDownload:        false,
+    ProductionYear:     new Date().getUTCFullYear(),
+    Overview:           'Play this item to sync with Trakt and MDBList.',
+    Genres:             [],
+    GenreItems:         [],
+    DateCreated:        '1970-01-01T00:00:00.000Z',
+    RunTimeTicks:       SYNC_RUNTIME_TICKS,
+    IsFolder:           false,
+    Path:               '/fetcherr/Sync.mp4',
+    EnableMediaSourceDisplay: true,
+    ImageTags:          { Primary: SYNC_ARTWORK_TAG },
+    BackdropImageTags:  [SYNC_ARTWORK_TAG],
+    MediaSources:       [],
+    MediaSourceCount:   1,
+    UserData:           userDataForItem(SYNC_ITEM_ID, ud, SYNC_RUNTIME_TICKS),
   }
 }
 
@@ -2019,6 +2080,12 @@ function queryValue(value: string | string[] | undefined): string {
   return value ?? ''
 }
 
+function normalizeHeaderValues(headers: Record<string, string | string[] | undefined> | undefined): Record<string, string | undefined> {
+  return Object.fromEntries(
+    Object.entries(headers ?? {}).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]),
+  )
+}
+
 function defaultPlaybackMediaSource(id: string, name: string, playUrl: string, runtimeTicks: number) {
   return {
     Id:                   id,
@@ -2037,6 +2104,48 @@ function defaultPlaybackMediaSource(id: string, name: string, playUrl: string, r
     MediaStreams: [
       { Type: 'Video', Index: 0, Codec: 'h264', IsDefault: true },
       { Type: 'Audio', Index: 1, Codec: 'aac',  IsDefault: true, Language: 'eng' },
+    ],
+  }
+}
+
+function syncPlaybackMediaSource(origin: string) {
+  return {
+    Id:                   SYNC_ITEM_ID,
+    Name:                 'Sync',
+    Type:                 'Default',
+    Protocol:             'Http',
+    Path:                 createSignedPlaybackUrl(origin, SYNC_PLAY_PATH),
+    IsRemote:             true,
+    SupportsDirectPlay:   true,
+    SupportsDirectStream: true,
+    SupportsTranscoding:  false,
+    RequiresOpening:      false,
+    RequiresClosing:      false,
+    Container:            'mp4',
+    Size:                 SYNC_VIDEO_SIZE_BYTES,
+    RunTimeTicks:         SYNC_RUNTIME_TICKS,
+    MediaStreams: [
+      {
+        Type:                'Video',
+        Index:               0,
+        Codec:               'h264',
+        IsDefault:           true,
+        Width:               1920,
+        Height:              1080,
+        AverageFrameRate:    30,
+        RealFrameRate:       30,
+        Profile:             'High',
+        Level:               40,
+      },
+      {
+        Type:       'Audio',
+        Index:      1,
+        Codec:      'aac',
+        IsDefault:  true,
+        Language:   'eng',
+        Channels:   2,
+        SampleRate: 48000,
+      },
     ],
   }
 }
@@ -2287,6 +2396,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       ...(config.traktCollections ? [traktCollectionsFolderToItem(user)] : []),
       ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
       ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
+      syncItem(user.id),
     ]
     return {
       Items: items,
@@ -2502,6 +2612,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         ...(config.traktCollections ? [traktCollectionsFolderToItem(user)] : []),
         ...config.traktLists.filter(slug => isTraktListFolder(config.traktFolders, slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
         ...config.mdblistLists.filter(entry => isMdblistListFolder(config.mdblistFolders, entry.url)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
+        syncItem(user.id),
       ]
       return {
         Items: folders,
@@ -2762,6 +2873,15 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (!currentUser) return reply.code(401).send({ error: 'Unauthorized' })
     if (id === SEARCH_DISABLED_ITEM_ID) {
       return searchDisabledItem('')
+    }
+    if (id === SYNC_ITEM_ID) {
+      const mediaSource = syncPlaybackMediaSource(buildPlaybackOrigin(normalizeHeaderValues(headers)))
+      return {
+        ...syncItem(currentUser.id),
+        MediaSources: [mediaSource],
+        AlternateMediaSources: [mediaSource],
+        MediaSourceCount: 1,
+      }
     }
     // Collection folders
     if (id === MOVIES_FOLDER_ID) {
@@ -3054,6 +3174,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const isThumb = type.toLowerCase() === 'thumb'
     const kind = imageKindForType(type)
     const rootFolderUser = requestUser(headers) ?? fallbackUser()
+    if (id === SYNC_ITEM_ID) {
+      return sendLocalPng(reply, isBackdrop || isThumb ? 'fetcherr-sync-backdrop.png' : 'fetcherr-sync-primary.png')
+    }
     if (id === MOVIES_FOLDER_ID || id === SHOWS_FOLDER_ID || id === COLLECTIONS_FOLDER_ID) {
       const representative = bestRootFolderImage(id, rootFolderUser)
       if (!representative) return reply.code(404).send()
@@ -3324,6 +3447,17 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (id === SEARCH_DISABLED_ITEM_ID) {
       return searchDisabledPlaybackInfo(buildPlaybackOrigin(req.headers))
     }
+    if (id === SYNC_ITEM_ID) {
+      const mediaSource = syncPlaybackMediaSource(buildPlaybackOrigin(req.headers))
+      opts.registerPlaybackItem?.(id, SYNC_PLAY_PATH)
+      opts.registerPlaybackClient?.(SYNC_PLAY_PATH, playbackClientFromHeaders(req.headers))
+      app.log.info('playback: Fetcherr sync trigger item requested')
+      return {
+        MediaSources: [mediaSource],
+        AlternateMediaSources: [mediaSource],
+        PlaySessionId: `fetcherr-${id}`,
+      }
+    }
 
     const stremioEpisode = idToStremioEpisode(id)
     if (stremioEpisode) {
@@ -3524,6 +3658,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const origin = buildPlaybackOrigin(req.headers as Record<string, string | undefined>)
     if (id === SEARCH_DISABLED_ITEM_ID) {
       return reply.code(409).send({ error: 'Search disabled', message: 'Fetcherr Search Disabled' })
+    }
+    if (id === SYNC_ITEM_ID) {
+      return reply.redirect(createSignedPlaybackUrl(origin, SYNC_PLAY_PATH), 302)
     }
 
     const stremioEpisode = idToStremioEpisode(id)

@@ -1,6 +1,9 @@
 import Fastify from 'fastify'
+import type { FastifyReply } from 'fastify'
 import { parseTorrentTitle, type ParsedResult as ParsedTorrentTitleResult } from '@viren070/parse-torrent-title'
 import { randomBytes } from 'node:crypto'
+import { createReadStream, existsSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseStremioSearchSource } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
@@ -1721,6 +1724,86 @@ app.get('/play/stremio/:mediaType/:externalId', async (req, reply) => {
     return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
   }
 })
+
+const SYNC_PLAY_PATH = '/play/fetcherr-sync'
+let syncPlaybackCooldownUntil = 0
+
+function syncVideoPath(): string | null {
+  const candidates = [
+    join(process.cwd(), 'src/assets/fetcherr-sync.mp4'),
+    join(process.cwd(), 'dist/assets/fetcherr-sync.mp4'),
+    join(process.cwd(), 'assets/fetcherr-sync.mp4'),
+  ]
+  return candidates.find(existsSync) ?? null
+}
+
+async function runSyncForPlaybackTrigger(): Promise<void> {
+  const now = Date.now()
+  if (now < syncPlaybackCooldownUntil) {
+    app.log.info('sync: playback trigger skipped; recent sync already completed')
+    return
+  }
+  app.log.info('sync: playback trigger starting sync')
+  await runSync()
+  syncPlaybackCooldownUntil = Date.now() + 60_000
+}
+
+async function handleSyncVideoPlayback(
+  req: {
+    headers: Record<string, string | string[] | undefined>
+    query: { token?: string; expires?: string } | undefined
+  },
+  reply: FastifyReply,
+) {
+  const query = req.query
+  if (!verifySignedPlaybackPath(SYNC_PLAY_PATH, query?.token, query?.expires)) {
+    if (!requestPlaybackUser(req.headers)) {
+      app.log.warn('play: rejected unauthenticated Fetcherr sync trigger playback request')
+    } else {
+      app.log.warn('play: rejected unsigned or expired Fetcherr sync trigger playback request')
+    }
+    return reply.code(401).send({ error: 'Unauthorized' })
+  }
+
+  app.log.info('sync: playback item requested')
+  try {
+    await runSyncForPlaybackTrigger()
+    app.log.info('sync: playback trigger completed; serving confirmation clip')
+  } catch (err) {
+    app.log.error(`Sync playback trigger failed: ${err}`)
+    return reply.code(500).send({ error: 'Sync failed' })
+  }
+
+  const path = syncVideoPath()
+  if (!path) return reply.code(500).send({ error: 'Sync video asset missing' })
+
+  const { size } = statSync(path)
+  const rangeHeader = Array.isArray(req.headers.range) ? req.headers.range[0] : req.headers.range
+
+  reply.header('Accept-Ranges', 'bytes')
+  reply.header('Content-Type', 'video/mp4')
+  reply.header('Cache-Control', 'no-store')
+
+  if (rangeHeader) {
+    const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/)
+    if (!match) {
+      reply.header('Content-Range', `bytes */${size}`)
+      return reply.code(416).send()
+    }
+    const requestedStart = match[1] ? Number.parseInt(match[1], 10) : 0
+    const requestedEnd = match[2] ? Number.parseInt(match[2], 10) : size - 1
+    const start = Number.isFinite(requestedStart) ? Math.max(0, Math.min(requestedStart, size - 1)) : 0
+    const end = Number.isFinite(requestedEnd) ? Math.max(start, Math.min(requestedEnd, size - 1)) : size - 1
+    reply.header('Content-Range', `bytes ${start}-${end}/${size}`)
+    reply.header('Content-Length', String(end - start + 1))
+    return reply.code(206).send(createReadStream(path, { start, end }))
+  }
+
+  reply.header('Content-Length', String(size))
+  return reply.send(createReadStream(path))
+}
+
+app.get(SYNC_PLAY_PATH, async (req, reply) => handleSyncVideoPlayback(req as never, reply as never))
 
 app.get('/play/:imdbId', async (req, reply) => {
   const { imdbId } = req.params as { imdbId: string }
