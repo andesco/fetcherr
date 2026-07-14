@@ -445,7 +445,15 @@ input:-webkit-autofill:focus {
 }
 
 select {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 52px;
   min-height: 52px;
+  padding: 0 40px 0 12px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--muted-strong) 50%) calc(100% - 20px) 50% / 6px 6px no-repeat,
+    linear-gradient(135deg, var(--muted-strong) 50%, transparent 50%) calc(100% - 16px) 50% / 6px 6px no-repeat,
+    var(--surface-inset);
   cursor: pointer;
 }
 
@@ -996,6 +1004,7 @@ label {
 }
 
 .detail-mode-options .item-mode-btn {
+  height: 44px;
   min-height: 44px;
   padding: 11px 12px;
 }
@@ -1154,6 +1163,7 @@ label {
   align-items: center;
   gap: 8px;
   width: 100%;
+  height: 46px;
   min-height: 46px;
   padding: 13px 11px;
   border: 1px solid transparent;
