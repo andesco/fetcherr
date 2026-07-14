@@ -411,7 +411,7 @@ input,
 select,
 textarea {
   width: 100%;
-  padding: 14px 12px;
+  padding: .75rem .857rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-inset);
@@ -447,12 +447,12 @@ input:-webkit-autofill:focus {
 select {
   -webkit-appearance: none;
   appearance: none;
-  height: 52px;
-  min-height: 52px;
-  padding: 0 40px 0 12px;
+  height: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0 2.75rem 0 .857rem;
   background:
-    linear-gradient(45deg, transparent 50%, var(--muted-strong) 50%) calc(100% - 20px) 50% / 6px 6px no-repeat,
-    linear-gradient(135deg, var(--muted-strong) 50%, transparent 50%) calc(100% - 16px) 50% / 6px 6px no-repeat,
+    linear-gradient(45deg, transparent 50%, var(--muted-strong) 50%) calc(100% - 1.35rem) 50% / .43rem .43rem no-repeat,
+    linear-gradient(135deg, var(--muted-strong) 50%, transparent 50%) calc(100% - 1.1rem) 50% / .43rem .43rem no-repeat,
     var(--surface-inset);
   cursor: pointer;
 }
@@ -1004,9 +1004,9 @@ label {
 }
 
 .detail-mode-options .item-mode-btn {
-  height: 44px;
-  min-height: 44px;
-  padding: 11px 12px;
+  height: 2.85rem;
+  min-height: 2.85rem;
+  padding: .7rem .85rem;
 }
 
 .item-mode-btn:hover,
@@ -1163,9 +1163,9 @@ label {
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 46px;
-  min-height: 46px;
-  padding: 13px 11px;
+  height: 3rem;
+  min-height: 3rem;
+  padding: .8rem .75rem;
   border: 1px solid transparent;
   border-radius: var(--radius);
   background: transparent;
