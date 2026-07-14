@@ -411,7 +411,7 @@ input,
 select,
 textarea {
   width: 100%;
-  padding: 12px 12px;
+  padding: 14px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-inset);
@@ -445,7 +445,7 @@ input:-webkit-autofill:focus {
 }
 
 select {
-  min-height: 45px;
+  min-height: 52px;
   cursor: pointer;
 }
 
@@ -996,8 +996,8 @@ label {
 }
 
 .detail-mode-options .item-mode-btn {
-  min-height: 40px;
-  padding: 9px 12px;
+  min-height: 44px;
+  padding: 11px 12px;
 }
 
 .item-mode-btn:hover,
@@ -1154,8 +1154,8 @@ label {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 42px;
-  padding: 11px 11px;
+  min-height: 46px;
+  padding: 13px 11px;
   border: 1px solid transparent;
   border-radius: var(--radius);
   background: transparent;
