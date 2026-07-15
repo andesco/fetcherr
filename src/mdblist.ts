@@ -1,4 +1,4 @@
-import { config, type MdblistListEntry } from './config.js'
+import { config, normalizeListPresentation, presentationFromLegacyMode, type MdblistListEntry } from './config.js'
 import {
   hasAnySourceItem,
   listSourceKeys,
@@ -96,9 +96,14 @@ export function normalizeMdblistEntries(entries: MdblistListEntry[]): MdblistLis
       const url = normalizeMdblistListUrl(entry.url)
       if (!seen.has(url)) {
         seen.add(url)
+        const hasPresentation = entry.includeInLibrary != null || entry.showAsFolder != null || entry.showAsCollection != null
+        const presentation = hasPresentation
+          ? normalizeListPresentation(entry)
+          : presentationFromLegacyMode(entry.mode)
         result.push({
           url,
           ...(entry.name?.trim() ? { name: entry.name.trim() } : {}),
+          ...(presentation ? presentation : {}),
           ...(Number.isFinite(Number(entry.maxItems)) && Number(entry.maxItems) > 0 ? { maxItems: Math.trunc(Number(entry.maxItems)) } : {}),
         })
       }

@@ -22,7 +22,7 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { collectStreamProviderUrls, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, serializeFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseStremioSearchSource, parseTraktLists } from '../config.js'
+import { collectStreamProviderUrls, normalizeListPresentation, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, serializeFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseStremioSearchSource, parseTraktLists, type ListPresentation } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistEntries } from '../mdblist.js'
@@ -944,25 +944,26 @@ export async function uiRoutes(app: FastifyInstance) {
       cleanupRemovedTraktListSources(lists)
     }
     if (body.traktListModes != null && typeof body.traktListModes === 'object' && !Array.isArray(body.traktListModes)) {
-      const MODES = new Set(['library', 'folder', 'collection', 'browse_only'])
-      const modes: Record<string, string> = {}
+      const modes: Record<string, ListPresentation> = {}
       for (const [k, v] of Object.entries(body.traktListModes as Record<string, unknown>)) {
-        if (typeof v === 'string' && MODES.has(v) && v !== 'library') modes[k] = v
+        if (typeof v === 'string' || (typeof v === 'object' && v !== null && !Array.isArray(v))) {
+          modes[k] = normalizeListPresentation(v)
+        }
       }
       setSetting('traktListModes', JSON.stringify(modes))
-      config.traktListModes = modes as Record<string, import('../config.js').TraktListMode>
+      config.traktListModes = modes
     }
     if (Array.isArray(body.mdblistLists)) {
       try {
-        const MODES = new Set(['library', 'folder', 'collection', 'browse_only'])
         const raw = (body.mdblistLists as unknown[])
           .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).url === 'string')
           .map(v => {
             const maxItems = Number(v.maxItems)
+            const presentation = normalizeListPresentation(v)
             return {
               url: String(v.url).trim(),
               ...(v.name && String(v.name).trim() ? { name: String(v.name).trim() } : {}),
-              ...(typeof v.mode === 'string' && MODES.has(v.mode) ? { mode: v.mode as 'library' | 'folder' | 'collection' | 'browse_only' } : {}),
+              ...presentation,
               ...(Number.isFinite(maxItems) && maxItems > 0 ? { maxItems: Math.trunc(maxItems) } : {}),
             }
           })

@@ -25,16 +25,62 @@ export function parseTraktLists(value: string): string[] {
 }
 
 export type TraktListMode = 'library' | 'folder' | 'collection' | 'browse_only'
+export type ListPresentationMode = TraktListMode
 
-export function parseTraktListModes(value: string): Record<string, TraktListMode> {
+export interface ListPresentation {
+  includeInLibrary: boolean
+  showAsFolder: boolean
+  showAsCollection: boolean
+}
+
+export const DEFAULT_LIST_PRESENTATION: ListPresentation = {
+  includeInLibrary: true,
+  showAsFolder: false,
+  showAsCollection: false,
+}
+
+const LIST_PRESENTATION_MODES = new Set<string>(['library', 'folder', 'collection', 'browse_only'])
+
+export function presentationFromLegacyMode(mode: unknown): ListPresentation | null {
+  if (mode === 'library') return { includeInLibrary: true, showAsFolder: false, showAsCollection: false }
+  if (mode === 'folder') return { includeInLibrary: true, showAsFolder: true, showAsCollection: false }
+  if (mode === 'browse_only') return { includeInLibrary: false, showAsFolder: true, showAsCollection: false }
+  if (mode === 'collection') return { includeInLibrary: true, showAsFolder: false, showAsCollection: true }
+  return null
+}
+
+export function normalizeListPresentation(value: unknown, fallback: ListPresentation = DEFAULT_LIST_PRESENTATION): ListPresentation {
+  const legacy = presentationFromLegacyMode(value)
+  if (legacy) return legacy
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    const nestedLegacy = presentationFromLegacyMode(record.mode)
+    const base = nestedLegacy ?? fallback
+    return {
+      includeInLibrary: typeof record.includeInLibrary === 'boolean' ? record.includeInLibrary : base.includeInLibrary,
+      showAsFolder: typeof record.showAsFolder === 'boolean' ? record.showAsFolder : base.showAsFolder,
+      showAsCollection: typeof record.showAsCollection === 'boolean' ? record.showAsCollection : base.showAsCollection,
+    }
+  }
+  return { ...fallback }
+}
+
+export function isListPresentationEnabled(presentation: ListPresentation): boolean {
+  return presentation.includeInLibrary || presentation.showAsFolder || presentation.showAsCollection
+}
+
+export function parseTraktListModes(value: string): Record<string, ListPresentation> {
   if (!value.trim()) return {}
   try {
     const parsed = JSON.parse(value)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      const MODES = new Set(['library', 'folder', 'collection', 'browse_only'])
-      const result: Record<string, TraktListMode> = {}
+      const result: Record<string, ListPresentation> = {}
       for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === 'string' && MODES.has(v)) result[k] = v as TraktListMode
+        if (typeof v === 'string' && LIST_PRESENTATION_MODES.has(v)) {
+          result[k] = normalizeListPresentation(v)
+        } else if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+          result[k] = normalizeListPresentation(v)
+        }
       }
       return result
     }
@@ -48,10 +94,21 @@ export interface MdblistListEntry {
   url: string
   name?: string
   mode?: MdblistListMode
+  includeInLibrary?: boolean
+  showAsFolder?: boolean
+  showAsCollection?: boolean
   maxItems?: number
 }
 
 const MDBLIST_MODES = new Set<string>(['library', 'folder', 'collection', 'browse_only'])
+
+function mdblistEntryPresentation(entry: Record<string, unknown>): ListPresentation | null {
+  const hasFlags = typeof entry.includeInLibrary === 'boolean'
+    || typeof entry.showAsFolder === 'boolean'
+    || typeof entry.showAsCollection === 'boolean'
+  if (hasFlags) return normalizeListPresentation(entry)
+  return presentationFromLegacyMode(entry.mode)
+}
 
 export function parseMdblistLists(value: string): MdblistListEntry[] {
   if (!value.trim()) return []
@@ -62,12 +119,16 @@ export function parseMdblistLists(value: string): MdblistListEntry[] {
       if (Array.isArray(parsed)) {
         return (parsed as unknown[])
           .filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null && typeof (e as Record<string, unknown>).url === 'string')
-          .map(e => ({
-            url: String(e.url).trim(),
-            ...(e.name && String(e.name).trim() ? { name: String(e.name).trim() } : {}),
-            ...(typeof e.mode === 'string' && MDBLIST_MODES.has(e.mode) ? { mode: e.mode as MdblistListMode } : {}),
-            ...(Number.isFinite(Number(e.maxItems)) && Number(e.maxItems) > 0 ? { maxItems: Math.trunc(Number(e.maxItems)) } : {}),
-          }))
+          .map(e => {
+            const presentation = mdblistEntryPresentation(e)
+            return {
+              url: String(e.url).trim(),
+              ...(e.name && String(e.name).trim() ? { name: String(e.name).trim() } : {}),
+              ...(typeof e.mode === 'string' && MDBLIST_MODES.has(e.mode) && !presentation ? { mode: e.mode as MdblistListMode } : {}),
+              ...(presentation ? presentation : {}),
+              ...(Number.isFinite(Number(e.maxItems)) && Number(e.maxItems) > 0 ? { maxItems: Math.trunc(Number(e.maxItems)) } : {}),
+            }
+          })
           .filter(e => e.url)
       }
     } catch { /* fall through to legacy */ }

@@ -281,6 +281,10 @@ h1 {
   flex-wrap: wrap;
 }
 
+.btn-row {
+  margin-top: 12px;
+}
+
 .btn,
 .btn-add {
   display: inline-flex;
@@ -407,12 +411,13 @@ input,
 select,
 textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: .75rem .857rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-inset);
   color: var(--text);
   font-size: 14px;
+  line-height: 1.35;
   outline: none;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
   transition: border-color .15s, box-shadow .15s, background .15s;
@@ -440,10 +445,20 @@ input:-webkit-autofill:focus {
 }
 
 select {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2rem;
+  min-height: 2rem;
+  padding: 0 2rem 0 .75rem;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.25 6 6.25l5-5' fill='none' stroke='%23c2ccd9' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") calc(100% - .75rem) 50% / .75rem .5rem no-repeat,
+    var(--surface-inset);
   cursor: pointer;
 }
 
 select option {
+  min-height: 34px;
+  padding: 8px 12px;
   background: var(--surface);
 }
 
@@ -972,7 +987,8 @@ label {
 }
 
 .item-mode-btn {
-  padding: 6px 8px;
+  padding: 8px 10px;
+  line-height: 1.25;
   white-space: nowrap;
 }
 
@@ -987,8 +1003,9 @@ label {
 }
 
 .detail-mode-options .item-mode-btn {
-  min-height: 34px;
-  padding: 7px 10px;
+  height: 2rem;
+  min-height: 2rem;
+  padding: .35rem .75rem;
 }
 
 .item-mode-btn:hover,
@@ -1145,8 +1162,9 @@ label {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 34px;
-  padding: 8px 9px;
+  height: 2rem;
+  min-height: 2rem;
+  padding: .35rem .75rem;
   border: 1px solid transparent;
   border-radius: var(--radius);
   background: transparent;
@@ -1154,6 +1172,7 @@ label {
   font-family: inherit;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.25;
   text-align: left;
   cursor: pointer;
   transition: background .15s, border-color .15s, color .15s;
@@ -2082,6 +2101,7 @@ label {
 
 .trakt-list-actions {
   margin-top: 12px;
+  margin-bottom: 14px;
 }
 
 /* MDBList three-dot menu */
@@ -2125,6 +2145,7 @@ label {
   box-shadow: 0 4px 16px rgba(0, 0, 0, .3);
   z-index: 200;
   overflow: hidden;
+  text-transform: none;
 }
 
 .mdblist-row-menu.open .mdblist-menu-dropdown {
@@ -2142,6 +2163,36 @@ label {
 
 .mdblist-menu-item:hover {
   background: var(--accent-dim);
+}
+
+.mdblist-menu-heading {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: none;
+}
+
+.mdblist-menu-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+  text-transform: none;
+}
+
+.mdblist-menu-check:hover {
+  background: var(--accent-dim);
+}
+
+.mdblist-menu-check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
 }
 
 .mdblist-menu-item.checked::before {
@@ -2187,11 +2238,18 @@ label {
   color: #e8890c;
 }
 
+.mdblist-mode-disabled {
+  background: rgba(150, 150, 150, .16);
+  color: var(--muted);
+}
+
 @media (prefers-color-scheme: light) {
   .mdblist-mode-browse_only { background: rgba(255, 140, 0, .12); color: #c06000; }
+  .mdblist-mode-disabled { background: rgba(80, 80, 80, .08); color: #707070; }
 }
 
 :root[data-theme="light"] .mdblist-mode-browse_only { background: rgba(255, 140, 0, .12); color: #c06000; }
+:root[data-theme="light"] .mdblist-mode-disabled { background: rgba(80, 80, 80, .08); color: #707070; }
 
 .user-table-wrap {
   margin-top: 14px;

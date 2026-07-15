@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
-import { config, type ListFoldersSetting } from '../config.js'
+import { config, normalizeListPresentation, type ListFoldersSetting, type ListPresentation, type MdblistListEntry } from '../config.js'
 import {
   listMovies, countMovies, getMovieByTmdbId,
   listUsers, getUserData, saveProgress, markPlayed, markUnplayed, listResumeItemIds, countResumeItems, getAllPlayedItemIds,
@@ -51,30 +51,30 @@ const FOLDER_ID = MOVIES_FOLDER_ID
 
 const API_LIBRARY_FILTER = { availableOnly: true as const }
 
-function traktListMode(slug: string): string {
-  return config.traktListModes[slug] ?? 'library'
+function traktListPresentation(slug: string): ListPresentation {
+  const configured = config.traktListModes[slug]
+  if (configured) return normalizeListPresentation(configured)
+  return {
+    includeInLibrary: true,
+    showAsFolder: isTraktListFolder(config.traktFolders, slug),
+    showAsCollection: config.traktCollections,
+  }
 }
 
 function isTraktEntryVisible(slug: string): boolean {
-  const mode = traktListMode(slug)
-  if (mode === 'folder' || mode === 'browse_only') return true
-  if (mode === 'collection' || mode === 'library') return false
-  return isTraktListFolder(config.traktFolders, slug)
+  return traktListPresentation(slug).showAsFolder
 }
 
 function isTraktEntryCollection(slug: string): boolean {
-  const m = config.traktListModes[slug]
-  if (m === 'collection') return true
-  if (m != null && m !== 'library') return false
-  return config.traktCollections
+  return traktListPresentation(slug).showAsCollection
 }
 
 function apiLibraryFilter(): { availableOnly: true; excludeSourceKeys?: string[] } {
   const mdblistKeys = config.mdblistLists
-    .filter(e => e.mode === 'browse_only')
+    .filter(e => !mdblistListPresentation(e).includeInLibrary)
     .map(e => mdblistFolderSourceKey(e.url))
   const traktKeys = config.traktLists
-    .filter(slug => config.traktListModes[slug] === 'browse_only')
+    .filter(slug => !traktListPresentation(slug).includeInLibrary)
     .map(slug => `trakt:list:${slug}`)
   const keys = [...mdblistKeys, ...traktKeys]
   return keys.length ? { availableOnly: true, excludeSourceKeys: keys } : API_LIBRARY_FILTER
@@ -171,9 +171,23 @@ function normalizePlaybackItemId(itemId: string): string {
   return itemId
 }
 
-function traktCollectionSlugToId(slug: string): string {
-  const digest = createHash('md5').update(`trakt:list:${slug}`).digest('hex').slice(0, 12)
+function traktListId(slug: string, kind: 'folder' | 'collection'): string {
+  const digest = createHash('md5').update(`trakt:list:${kind}:${slug}`).digest('hex').slice(0, 12)
   return `00000000-0000-4000-8006-${digest}`
+}
+
+function traktFolderSlugToId(slug: string): string {
+  return traktListId(slug, 'folder')
+}
+
+function traktCollectionSlugToId(slug: string): string {
+  return traktListId(slug, 'collection')
+}
+
+function idToTraktFolderSlug(id: string): string | null {
+  const m = id.match(/^00000000-0000-4000-8006-([0-9a-f]{12})$/i)
+  if (!m) return null
+  return config.traktLists.find(slug => traktFolderSlugToId(slug) === id) ?? null
 }
 
 function idToTraktCollectionSlug(id: string): string | null {
@@ -667,10 +681,18 @@ function isMdblistListFolder(setting: ListFoldersSetting, url: string): boolean 
   return setting.some(s => path === s || path.endsWith(`/${s}`))
 }
 
-function isMdblistEntryVisible(entry: { url: string; mode?: string }): boolean {
-  if (entry.mode === 'folder' || entry.mode === 'browse_only') return true
-  if (entry.mode === 'library' || entry.mode === 'collection') return false
-  return isMdblistListFolder(config.mdblistFolders, entry.url)
+function mdblistListPresentation(entry: MdblistListEntry): ListPresentation {
+  const hasPresentation = entry.includeInLibrary != null || entry.showAsFolder != null || entry.showAsCollection != null
+  if (hasPresentation || entry.mode) return normalizeListPresentation(entry)
+  return {
+    includeInLibrary: true,
+    showAsFolder: isMdblistListFolder(config.mdblistFolders, entry.url),
+    showAsCollection: false,
+  }
+}
+
+function isMdblistEntryVisible(entry: MdblistListEntry): boolean {
+  return mdblistListPresentation(entry).showAsFolder
 }
 
 function mdblistFolderUrlForId(id: string | null | undefined): string | null {
@@ -679,18 +701,26 @@ function mdblistFolderUrlForId(id: string | null | undefined): string | null {
   if (!url) return null
   const entry = config.mdblistLists.find(e => e.url === url)
   if (!entry) return null
-  if (entry.mode === 'folder' || entry.mode === 'browse_only' || entry.mode === 'collection') return url
-  return isMdblistListFolder(config.mdblistFolders, url) ? url : null
+  return mdblistListPresentation(entry).showAsFolder ? url : null
+}
+
+function mdblistCollectionUrlForId(id: string | null | undefined): string | null {
+  if (!id) return null
+  const url = idToMdblistCollectionListUrl(id)
+  if (!url) return null
+  const entry = config.mdblistLists.find(e => e.url === url)
+  if (!entry) return null
+  return mdblistListPresentation(entry).showAsCollection ? url : null
 }
 
 function hasAnyCollections(): boolean {
   return config.traktLists.some(slug => isTraktEntryCollection(slug))
-    || config.mdblistLists.some(e => e.mode === 'collection')
+    || config.mdblistLists.some(e => mdblistListPresentation(e).showAsCollection)
 }
 
-function buildMdblistCollectionItem(entry: { url: string; name?: string; mode?: string }, count: number) {
+function buildMdblistCollectionItem(entry: MdblistListEntry, count: number) {
   const path = mdblistListPathFromUrl(entry.url)
-  const id = mdblistFolderIdFromPath(path)
+  const id = mdblistCollectionIdFromPath(path)
   const name = nameForMdblistUrl(entry.url)
   return {
     Id: id, ServerId: SERVER_GUID, Name: name, SortName: name.toLowerCase(),
@@ -704,7 +734,7 @@ function buildMdblistCollectionItem(entry: { url: string; name?: string; mode?: 
 
 function mdblistCollectionItems(user: AppUser) {
   return config.mdblistLists
-    .filter(e => e.mode === 'collection')
+    .filter(e => mdblistListPresentation(e).showAsCollection)
     .map(e => buildMdblistCollectionItem(e, mdblistFolderMembers(user, e.url).length))
 }
 
@@ -715,13 +745,24 @@ type TraktCollectionSummary = { slug: string; members: CollectionMember[]; item:
 // ── MDBList folder helpers ─────────────────────────────────────────────────────
 
 function mdblistFolderIdFromPath(path: string): string {
-  const digest = createHash('md5').update(`mdblist:list:${path}`).digest('hex').slice(0, 12)
+  const digest = createHash('md5').update(`mdblist:list:folder:${path}`).digest('hex').slice(0, 12)
+  return `00000000-0000-4000-8009-${digest}`
+}
+
+function mdblistCollectionIdFromPath(path: string): string {
+  const digest = createHash('md5').update(`mdblist:list:collection:${path}`).digest('hex').slice(0, 12)
   return `00000000-0000-4000-8009-${digest}`
 }
 
 function idToMdblistListUrl(id: string): string | null {
   if (!id.match(/^00000000-0000-4000-8009-[0-9a-f]{12}$/i)) return null
   const entry = config.mdblistLists.find(e => mdblistFolderIdFromPath(mdblistListPathFromUrl(e.url)) === id)
+  return entry?.url ?? null
+}
+
+function idToMdblistCollectionListUrl(id: string): string | null {
+  if (!id.match(/^00000000-0000-4000-8009-[0-9a-f]{12}$/i)) return null
+  const entry = config.mdblistLists.find(e => mdblistCollectionIdFromPath(mdblistListPathFromUrl(e.url)) === id)
   return entry?.url ?? null
 }
 
@@ -860,7 +901,7 @@ function buildTraktCollectionItem(slug: string, members: CollectionMember[]) {
 }
 
 function buildTraktFolderItem(slug: string, count: number) {
-  const id = traktCollectionSlugToId(slug)
+  const id = traktFolderSlugToId(slug)
   const name = humanizeCollectionSlug(slug.split('/').pop() ?? slug)
   return {
     Id: id, ServerId: SERVER_GUID, Name: name, SortName: name.toLowerCase(),
@@ -929,7 +970,7 @@ function traktCollectionItemsForUser(user: AppUser): TraktCollectionItem[] {
 
 function traktCollectionsFolderToItem(user: AppUser) {
   const traktSummaries = traktCollectionSummariesForUser(user)
-  const mdblistCollEntries = config.mdblistLists.filter(e => e.mode === 'collection')
+  const mdblistCollEntries = config.mdblistLists.filter(e => mdblistListPresentation(e).showAsCollection)
   const traktItemCount = traktSummaries.reduce((sum, s) => sum + s.members.length, 0)
   const mdblistItemCount = mdblistCollEntries.reduce((sum, e) => sum + mdblistFolderMembers(user, e.url).length, 0)
   return {
@@ -1032,7 +1073,7 @@ function bestRootFolderImage(
   }
   if (id === COLLECTIONS_FOLDER_ID && hasAnyCollections()) {
     const traktMembers = traktCollectionSummariesForUser(visibleUser).flatMap(s => s.members)
-    const mdblistMembers = config.mdblistLists.filter(e => e.mode === 'collection').flatMap(e => mdblistFolderMembers(visibleUser, e.url))
+    const mdblistMembers = config.mdblistLists.filter(e => mdblistListPresentation(e).showAsCollection).flatMap(e => mdblistFolderMembers(visibleUser, e.url))
     return bestCollectionArtwork([...traktMembers, ...mdblistMembers])
   }
   return null
@@ -2305,7 +2346,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       : []),
     ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => {
       const name = humanizeCollectionSlug(slug.split('/').pop() ?? slug)
-      return { Name: name, CollectionType: 'boxsets', ItemId: traktCollectionSlugToId(slug), Locations: [`/trakt/${slug}`] }
+      return { Name: name, CollectionType: 'boxsets', ItemId: traktFolderSlugToId(slug), Locations: [`/trakt/${slug}`] }
     }),
     ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
@@ -2320,7 +2361,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(hasAnyCollections() ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
     ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => ({
-      Name: humanizeCollectionSlug(slug.split('/').pop() ?? slug), Id: traktCollectionSlugToId(slug), Type: 'boxsets',
+      Name: humanizeCollectionSlug(slug.split('/').pop() ?? slug), Id: traktFolderSlugToId(slug), Type: 'boxsets',
     })),
     ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
@@ -2332,7 +2373,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     { Name: 'Shows',  Id: SHOWS_FOLDER_ID,  Type: 'tvshows' },
     ...(hasAnyCollections() ? [{ Name: 'Collections', Id: COLLECTIONS_FOLDER_ID, Type: 'boxsets' }] : []),
     ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => ({
-      Name: humanizeCollectionSlug(slug.split('/').pop() ?? slug), Id: traktCollectionSlugToId(slug), Type: 'boxsets',
+      Name: humanizeCollectionSlug(slug.split('/').pop() ?? slug), Id: traktFolderSlugToId(slug), Type: 'boxsets',
     })),
     ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => {
       const p = mdblistListPathFromUrl(entry.url)
@@ -2533,9 +2574,19 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const items = await mdblistFolderContents(mdblistUrl, user, SortBy, SortOrder)
       return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
+    const mdblistCollectionUrl = mdblistCollectionUrlForId(ParentId)
+    if (mdblistCollectionUrl) {
+      const items = await mdblistFolderContents(mdblistCollectionUrl, user, SortBy, SortOrder)
+      return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
+    }
 
+    const folderSlug = ParentId ? idToTraktFolderSlug(ParentId) : null
+    if (folderSlug && isTraktEntryVisible(folderSlug)) {
+      const items = await traktCollectionContents(folderSlug, user)
+      return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
+    }
     const collectionSlug = ParentId ? idToTraktCollectionSlug(ParentId) : null
-    if (collectionSlug && (isTraktEntryVisible(collectionSlug) || isTraktEntryCollection(collectionSlug))) {
+    if (collectionSlug && isTraktEntryCollection(collectionSlug)) {
       const items = await traktCollectionContents(collectionSlug, user)
       return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
@@ -2880,20 +2931,23 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return traktCollectionsFolderToItem(currentUser)
     }
 
-    const collectionSlug = idToTraktCollectionSlug(id)
-    if (collectionSlug && isTraktListFolder(config.traktFolders, collectionSlug)) {
-      return buildTraktFolderItem(collectionSlug, collectionMembersForUser(currentUser, collectionSlug).length)
+    const folderSlug = idToTraktFolderSlug(id)
+    if (folderSlug && isTraktEntryVisible(folderSlug)) {
+      return buildTraktFolderItem(folderSlug, collectionMembersForUser(currentUser, folderSlug).length)
     }
+    const collectionSlug = idToTraktCollectionSlug(id)
     if (collectionSlug && isTraktEntryCollection(collectionSlug)) {
       return traktCollectionToItem(collectionSlug, currentUser)
     }
 
+    const mdblistCollectionUrl = mdblistCollectionUrlForId(id)
+    if (mdblistCollectionUrl) {
+      const entry = config.mdblistLists.find(e => e.url === mdblistCollectionUrl)
+      if (entry) return buildMdblistCollectionItem(entry, mdblistFolderMembers(currentUser, mdblistCollectionUrl).length)
+    }
+
     const mdblistUrl = mdblistFolderUrlForId(id)
     if (mdblistUrl) {
-      const entry = config.mdblistLists.find(e => e.url === mdblistUrl)
-      if (entry?.mode === 'collection') {
-        return buildMdblistCollectionItem(entry, mdblistFolderMembers(currentUser, mdblistUrl).length)
-      }
       return buildMdblistFolderItem(mdblistUrl, mdblistFolderMembers(currentUser, mdblistUrl).length)
     }
 
@@ -3162,11 +3216,19 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return sendImageUrl(reply, headers, representative.path, representative.kind, query)
     }
 
+    const folderSlug = idToTraktFolderSlug(id)
+    if (folderSlug && isTraktEntryVisible(folderSlug)) {
+      return sendTraktCollectionImage(folderSlug, type, query, headers, reply)
+    }
     const collectionSlug = idToTraktCollectionSlug(id)
-    if (collectionSlug && (isTraktEntryCollection(collectionSlug) || isTraktEntryVisible(collectionSlug))) {
+    if (collectionSlug && isTraktEntryCollection(collectionSlug)) {
       return sendTraktCollectionImage(collectionSlug, type, query, headers, reply)
     }
 
+    const mdblistCollectionImageUrl = mdblistCollectionUrlForId(id)
+    if (mdblistCollectionImageUrl) {
+      return sendMdblistFolderImage(mdblistCollectionImageUrl, type, query, headers, reply)
+    }
     const mdblistImageUrl = mdblistFolderUrlForId(id)
     if (mdblistImageUrl) {
       return sendMdblistFolderImage(mdblistImageUrl, type, query, headers, reply)

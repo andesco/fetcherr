@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import { parseTorrentTitle, type ParsedResult as ParsedTorrentTitleResult } from '@viren070/parse-torrent-title'
 import { randomBytes } from 'node:crypto'
-import { collectStreamProviderUrls, config, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseTraktListModes, parseStremioSearchSource } from './config.js'
+import { collectStreamProviderUrls, config, isListPresentationEnabled, normalizeListPresentation, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseTraktListModes, parseStremioSearchSource } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -1879,6 +1879,7 @@ async function runSyncInternal() {
   }
 
   for (const slug of config.traktLists) {
+    if (!isListPresentationEnabled(normalizeListPresentation(config.traktListModes[slug]))) continue
     await syncTraktList(slug).catch(err => app.log.error(`List sync "${slug}" failed: ${err}`))
   }
   if (config.traktWatchHistory) {
@@ -1893,6 +1894,7 @@ async function runSyncInternal() {
   }
 
   for (const entry of config.mdblistLists) {
+    if (!isListPresentationEnabled(normalizeListPresentation(entry))) continue
     await syncMdblistList(entry.url).catch(err => app.log.error(`MDBList sync "${entry.url}" failed: ${err}`))
   }
   const staleMdblistCleanup = cleanupRemovedMdblistListSources(config.mdblistLists.map(e => e.url))
