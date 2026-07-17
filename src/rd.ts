@@ -182,12 +182,12 @@ interface FfprobeJson {
 const RESOLVED_CACHE_TTL_MS = 3 * 60 * 1000
 const resolvedStreamCache = new Map<string, ResolvedCacheEntry>()
 
-function resolveCacheKey(hash: string, filePathHint?: string): string {
-  return `${hash}|${(filePathHint || '').toLowerCase()}`
+function resolveCacheKey(hash: string, filePathHint?: string, label?: string): string {
+  return `${hash}|${(filePathHint || '').toLowerCase()}|${(label || '').toLowerCase()}`
 }
 
-function getCachedResolvedStream(hash: string, filePathHint?: string): ResolvedStream | null {
-  const key = resolveCacheKey(hash, filePathHint)
+function getCachedResolvedStream(hash: string, filePathHint?: string, label?: string): ResolvedStream | null {
+  const key = resolveCacheKey(hash, filePathHint, label)
   const entry = resolvedStreamCache.get(key)
   if (!entry) return null
   if (Date.now() > entry.expiresAt) {
@@ -197,8 +197,8 @@ function getCachedResolvedStream(hash: string, filePathHint?: string): ResolvedS
   return { url: entry.url, filename: entry.filename, bytes: entry.bytes }
 }
 
-function cacheResolvedStream(hash: string, filePathHint: string | undefined, value: ResolvedStream): void {
-  resolvedStreamCache.set(resolveCacheKey(hash, filePathHint), {
+function cacheResolvedStream(hash: string, filePathHint: string | undefined, label: string | undefined, value: ResolvedStream): void {
+  resolvedStreamCache.set(resolveCacheKey(hash, filePathHint, label), {
     ...value,
     expiresAt: Date.now() + RESOLVED_CACHE_TTL_MS,
   })
@@ -216,18 +216,32 @@ function isLikelyPlayableTorrentFile(file: RdTorrentFile): boolean {
   return SELECTABLE_VIDEO_EXTS.has(torrentFileExt(lower))
 }
 
-function selectableTorrentFileIds(info: RdTorrentInfo, filePathHint?: string): number[] {
+function basename(path: string): string {
+  return path.split('/').pop() ?? path
+}
+
+// Season-pack labels/filenames rarely carry episode info, but the caller
+// always knows which episode it wants (`label`, e.g. "tt0386676 S1E1") — use
+// it to narrow pack candidates before scoring so a stray token match (e.g.
+// "1" from "Season 1-9") can't beat the actual episode file.
+function filterFilesForEpisode<T extends { path: string }>(files: T[], label?: string): T[] {
+  const m = /s(\d{1,2})\s*e(\d{1,3})\b/i.exec(label ?? '')
+  if (!m) return files
+  const season = parseInt(m[1], 10)
+  const episode = parseInt(m[2], 10)
+  const seTag = new RegExp(`s0*${season}[._ -]*e0*${episode}(?!\\d)`, 'i')
+  const xTag = new RegExp(`(?<!\\d)0*${season}x0*${episode}(?!\\d)`, 'i')
+  const matches = files.filter(f => {
+    const base = basename(f.path)
+    return seTag.test(base) || xTag.test(base)
+  })
+  return matches.length ? matches : files
+}
+
+function selectableTorrentFileIds(info: RdTorrentInfo, label?: string): number[] {
   const files = info.files.filter(file => file.bytes > 0)
   const playableFiles = files.filter(isLikelyPlayableTorrentFile)
-  const candidates = playableFiles.length ? playableFiles : files
-
-  if (filePathHint && candidates.length > 1) {
-    const hint = filePathHint.toLowerCase()
-    return [...candidates]
-      .sort((a, b) => similarity(b.path.toLowerCase(), hint) - similarity(a.path.toLowerCase(), hint))
-      .map(file => file.id)
-  }
-
+  const candidates = filterFilesForEpisode(playableFiles.length ? playableFiles : files, label)
   return candidates.map(file => file.id)
 }
 
@@ -238,7 +252,7 @@ function isMissingFilesParameterError(err: unknown): boolean {
   )
 }
 
-async function selectTorrentFiles(torrentId: string, filePathHint?: string): Promise<void> {
+async function selectTorrentFiles(torrentId: string, label?: string): Promise<void> {
   try {
     await selectFiles(torrentId, 'all')
     return
@@ -248,7 +262,7 @@ async function selectTorrentFiles(torrentId: string, filePathHint?: string): Pro
   }
 
   const info = await getTorrentInfo(torrentId)
-  const fileIds = selectableTorrentFileIds(info, filePathHint)
+  const fileIds = selectableTorrentFileIds(info, label)
   if (!fileIds.length) {
     throw new Error(`RD torrent ${torrentId} has no selectable files`)
   }
@@ -265,10 +279,11 @@ async function selectTorrentFiles(torrentId: string, filePathHint?: string): Pro
 export async function resolveStream(
   hash: string,
   filePathHint?: string,
+  label?: string,
 ): Promise<ResolvedStream> {
   if (!config.rdApiKey) throw new Error('RD_API_KEY not configured')
 
-  const cached = getCachedResolvedStream(hash, filePathHint)
+  const cached = getCachedResolvedStream(hash, filePathHint, label)
   if (cached) {
     console.log(`rd: cache hit for ${hash.slice(0, 8)}… → ${cached.filename}`)
     return cached
@@ -280,26 +295,32 @@ export async function resolveStream(
 
   try {
     // Select all files so RD starts processing immediately; we'll pick later
-    await selectTorrentFiles(torrentId, filePathHint)
+    await selectTorrentFiles(torrentId, label)
     const info = await waitDownloaded(torrentId)
 
-    // Choose the link whose file path best matches the hint, or pick largest
+    // Choose the link whose file path best matches the hint, or pick largest.
+    // Score/pick within the episode-narrowed subset, but resolve the index
+    // against the full selected-files list — info.links is ordered to match
+    // *all* selected files, not just the episode-matching ones.
     let chosenLink: string
     if (filePathHint && info.files.length > 0) {
-      const hint = filePathHint.toLowerCase()
+      const hint = basename(filePathHint).toLowerCase()
       const selectedFiles = info.files.filter(f => f.selected)
-      const scored = selectedFiles
-        .map(f => ({ f, score: similarity(f.path.toLowerCase(), hint) }))
+      const episodeFiltered = filterFilesForEpisode(selectedFiles, label)
+      const scored = episodeFiltered
+        .map(f => ({ f, score: similarity(basename(f.path).toLowerCase(), hint) }))
         .sort((a, b) => b.score - a.score)
       const bestIdx = scored[0] ? selectedFiles.indexOf(scored[0].f) : 0
       chosenLink = info.links[bestIdx] ?? info.links[0]
     } else {
-      // No hint — pick link corresponding to largest file
+      // No hint — pick link corresponding to the largest episode-matching file
       const selectedFiles = info.files.filter(f => f.selected)
-      const largestIdx = selectedFiles.reduce(
-        (bi, f, i) => (f.bytes > (selectedFiles[bi]?.bytes ?? 0) ? i : bi),
-        0,
+      const episodeFiltered = filterFilesForEpisode(selectedFiles, label)
+      const largest = episodeFiltered.reduce(
+        (best, f) => (f.bytes > (best?.bytes ?? 0) ? f : best),
+        episodeFiltered[0],
       )
+      const largestIdx = largest ? selectedFiles.indexOf(largest) : 0
       chosenLink = info.links[largestIdx] ?? info.links[0]
     }
 
@@ -308,7 +329,7 @@ export async function resolveStream(
     const unrestricted = await unrestrictLink(chosenLink)
     console.log(`rd: unrestricted torrent ${torrentId} to ${unrestricted.filename}`)
     const resolved = { url: unrestricted.download, filename: unrestricted.filename, bytes: unrestricted.filesize }
-    cacheResolvedStream(hash, filePathHint, resolved)
+    cacheResolvedStream(hash, filePathHint, label, resolved)
     return resolved
   } finally {
     // Always clean up — fire and forget, but log success/failure so we can

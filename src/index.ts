@@ -926,7 +926,7 @@ async function resolvePlayableStream(
           } else {
             attemptedRdResolutions.add(attemptKey)
             try {
-              resolved = await resolveStream(hash, hint)
+              resolved = await resolveStream(hash, hint, label)
               provider = 'RD'
             } catch (rdErr) {
               if (rdErr instanceof NotCachedError) {

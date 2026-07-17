@@ -600,22 +600,15 @@ interface TraktWatchedMovieItem {
   }
 }
 
-interface TraktWatchedShowEpisode {
-  number?: number
-  last_watched_at?: string
-  plays?: number
-}
-
-interface TraktWatchedShowSeason {
-  number?: number
-  episodes?: TraktWatchedShowEpisode[]
-}
-
-interface TraktWatchedShowItem {
+interface TraktHistoryEpisodeItem {
+  watched_at?: string
+  episode?: {
+    season?: number
+    number?: number
+  }
   show?: {
     ids?: { tmdb?: number }
   }
-  seasons?: TraktWatchedShowSeason[]
 }
 
 export async function syncTraktWatchedStatus(): Promise<{ movies: number; episodes: number }> {
@@ -664,24 +657,20 @@ export async function syncTraktWatchedStatus(): Promise<{ movies: number; episod
     }
   })
 
-  await syncPaged<TraktWatchedShowItem>('/sync/watched/shows', items => {
+  // Trakt's /sync/watched/shows response dropped its seasons[] array; per-episode
+  // watched state now has to come from history, deduped to the most recent play.
+  const seenEpisodes = new Set<string>()
+  await syncPaged<TraktHistoryEpisodeItem>('/sync/history/episodes', items => {
     for (const item of items) {
       const showTmdbId = item.show?.ids?.tmdb
-      if (!showTmdbId) continue
-      for (const season of item.seasons ?? []) {
-        const seasonNum = season.number
-        if (!seasonNum) continue
-        for (const episode of season.episodes ?? []) {
-          const episodeNum = episode.number
-          if (!episodeNum) continue
-          syncPlayed(
-            episodeItemId(showTmdbId, seasonNum, episodeNum),
-            episode.last_watched_at ?? '',
-            DEFAULT_ADMIN_USER_ID,
-          )
-          syncedEpisodes++
-        }
-      }
+      const seasonNum = item.episode?.season
+      const episodeNum = item.episode?.number
+      if (!showTmdbId || !seasonNum || !episodeNum) continue
+      const itemId = episodeItemId(showTmdbId, seasonNum, episodeNum)
+      if (seenEpisodes.has(itemId)) continue
+      seenEpisodes.add(itemId)
+      syncPlayed(itemId, item.watched_at ?? '', DEFAULT_ADMIN_USER_ID)
+      syncedEpisodes++
     }
   })
 
