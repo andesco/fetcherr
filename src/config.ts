@@ -258,6 +258,7 @@ export const config = {
   rdApiKey:      process.env.RD_API_KEY ?? '',
   torBoxApiKey:  process.env.TORBOX_API_KEY ?? '',
   torBoxUserIp:  process.env.TORBOX_USER_IP ?? '',
+  premiumizeApiKey: process.env.PREMIUMIZE_API_KEY ?? '',
   traktClientId:     process.env.TRAKT_CLIENT_ID ?? '',
   traktClientSecret: process.env.TRAKT_CLIENT_SECRET ?? '',
   traktUsername:     process.env.TRAKT_USERNAME ?? '',

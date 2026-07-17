@@ -19,6 +19,7 @@ import {
   trackDirectTorBoxUrl,
   torBoxRequestdlTorrentId,
 } from './torbox.js'
+import { resolveStream as pmResolveStream } from './premiumize.js'
 import { getShowByImdbId, getMovieByImdbId, getEpisodesForSeason, getLatestSeasonNumberForShow, isEpisodeVisibleToLibrary, listLatestSeasonShowSubscriptions, listMovies, listShows, pruneAllOrphanedMovies, pruneAllOrphanedShows, removeSourceKey, upsertManualShowSubscription } from './db.js'
 import { ensureShowSeasonsCached, refreshShowMetadataIfNeeded, refreshMovieMetadataIfNeeded } from './tmdb.js'
 import { getSessionUser, getTokenFromCookie, isUiAuthConfigured, isValidSession } from './ui/auth.js'
@@ -82,6 +83,7 @@ getDb()
   if (s.rdApiKey)           config.rdApiKey            = s.rdApiKey
   if (s.torBoxApiKey)       config.torBoxApiKey        = s.torBoxApiKey
   if (s.torBoxUserIp)       config.torBoxUserIp        = s.torBoxUserIp
+  if (s.premiumizeApiKey)   config.premiumizeApiKey    = s.premiumizeApiKey
   if (s.tmdbApiKey)         config.tmdbApiKey          = s.tmdbApiKey
   if (s.tvdbApiKey)         config.tvdbApiKey          = s.tvdbApiKey
   if (s.serverUrl)          config.serverUrl           = s.serverUrl
@@ -723,13 +725,16 @@ async function resolvePlayableStream(
   fileHint?: string,
   allowDirectUrls = false,
 ): Promise<PlayResolution> {
-  if (config.rdApiKey || config.torBoxApiKey) {
+  if (config.rdApiKey || config.torBoxApiKey || config.premiumizeApiKey) {
     let rdTransientFailures = 0
     let tbTransientFailures = 0
+    let pmTransientFailures = 0
     const attemptedRdResolutions = new Set<string>()
     const attemptedTorBoxResolutions = new Set<string>()
+    const attemptedPmResolutions = new Set<string>()
     const failedRdHashes = new Map<string, string>()
     const failedTorBoxHashes = new Map<string, string>()
+    const failedPmHashes = new Map<string, string>()
     app.log.info(`play: trying ${streams.length} ordered candidate${streams.length === 1 ? '' : 's'} for ${label}`)
     const orderedStreams = allowDirectUrls || config.streamRankingMode === 'provider'
       ? streams
@@ -1010,6 +1015,50 @@ async function resolvePlayableStream(
             if (terminalReason) failedTorBoxHashes.set(normalizedHash, terminalReason)
             app.log.warn(`play: hash ${hashLabel}… TorBox failed: ${tbErr}; trying next`)
             continue
+          }
+        }
+
+        // Premiumize is always tried last — it has no cache-marker heuristic
+        // like [rd+]/[tb+] to jump the queue, and a Premiumize outage should
+        // never abort candidates RD/TorBox could still resolve, so unlike
+        // the blocks above this one never throws a 503; it just falls through.
+        if (!resolved && config.premiumizeApiKey) {
+          const failedReason = failedPmHashes.get(normalizedHash)
+          if (failedReason) {
+            app.log.info(`play: skipping Premiumize hash ${hashLabel}… for ${label}, already failed: ${failedReason}`)
+          } else if (attemptedPmResolutions.has(attemptKey)) {
+            app.log.info(`play: skipping duplicate Premiumize hash ${hashLabel}… for ${label}`)
+          } else {
+            attemptedPmResolutions.add(attemptKey)
+            try {
+              resolved = await pmResolveStream(hash, hint, label)
+              provider = 'Premiumize'
+            } catch (pmErr) {
+              if (pmErr instanceof NotCachedError) {
+                failedPmHashes.set(normalizedHash, 'not cached')
+                app.log.info(`play: hash ${hashLabel}… not cached on Premiumize`)
+              } else if (pmErr instanceof ProviderUnavailableError) {
+                pmTransientFailures += 1
+                const retryable = !isNonRetryableRdError(pmErr) && pmTransientFailures < MAX_RD_TRANSIENT_FAILURES
+                if (retryable) {
+                  app.log.warn(
+                    `play: Premiumize error for providerOrder=${providerOrder} hash ${hashLabel}…: ${pmErr}; ` +
+                    `trying next candidate (${pmTransientFailures}/${MAX_RD_TRANSIENT_FAILURES})`
+                  )
+                } else {
+                  const terminalReason = terminalProviderHashFailureReason(pmErr)
+                  if (terminalReason) failedPmHashes.set(normalizedHash, terminalReason)
+                  app.log.warn(
+                    `play: Premiumize unavailable for ${label} after ${pmTransientFailures} failure${pmTransientFailures === 1 ? '' : 's'}: ${pmErr}; ` +
+                    'not caching playback miss'
+                  )
+                }
+              } else {
+                const terminalReason = terminalProviderHashFailureReason(pmErr)
+                if (terminalReason) failedPmHashes.set(normalizedHash, terminalReason)
+                app.log.warn(`play: hash ${hashLabel}… Premiumize failed: ${pmErr}`)
+              }
+            }
           }
         }
 

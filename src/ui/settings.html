@@ -158,6 +158,14 @@
           <button id="tbClearBtn" class="btn btn-sm btn-danger" onclick="toggleClearApiKey('tb')" hidden>Clear</button>
         </div>
       </div>
+      <div class="field">
+        <label for="premiumizeApiKey">Premiumize API Key <span id="pmConfigState" class="config-state" hidden></span></label>
+        <div class="input-row">
+          <input id="premiumizeApiKey" type="password" placeholder="Enter your Premiumize API key" oninput="onApiKeyInput('pm')">
+          <button id="pmValidateBtn" class="btn btn-sm" onclick="validatePremiumize()" hidden>Validate</button>
+          <button id="pmClearBtn" class="btn btn-sm btn-danger" onclick="toggleClearApiKey('pm')" hidden>Clear</button>
+        </div>
+      </div>
     </div>
     <label class="check-item field" for="torBoxCleanupEnabled">
       <input id="torBoxCleanupEnabled" type="checkbox" checked>
@@ -442,8 +450,10 @@
   let traktAuthTimeoutId = null
   let hasStoredRdApiKey = false
   let hasStoredTorBoxApiKey = false
+  let hasStoredPremiumizeApiKey = false
   let clearRdApiKey = false
   let clearTorBoxApiKey = false
+  let clearPremiumizeApiKey = false
   let hasStoredTmdbApiKey = false
   let hasStoredTvdbApiKey = false
   let hasStoredTraktClientSecret = false
@@ -686,6 +696,16 @@
       hasStored: () => hasStoredTorBoxApiKey,
       isClearRequested: () => clearTorBoxApiKey,
       setClearRequested: value => { clearTorBoxApiKey = value },
+    },
+    pm: {
+      inputId: 'premiumizeApiKey',
+      buttonId: 'pmValidateBtn',
+      clearButtonId: 'pmClearBtn',
+      badgeId: 'pmConfigState',
+      label: 'Premiumize',
+      hasStored: () => hasStoredPremiumizeApiKey,
+      isClearRequested: () => clearPremiumizeApiKey,
+      setClearRequested: value => { clearPremiumizeApiKey = value },
     },
     tmdb: {
       inputId: 'tmdbApiKey',
@@ -997,8 +1017,10 @@
     const d = await res.json()
     hasStoredRdApiKey = !!d.hasRdApiKey
     hasStoredTorBoxApiKey = !!d.hasTorBoxApiKey
+    hasStoredPremiumizeApiKey = !!d.hasPremiumizeApiKey
     clearRdApiKey = false
     clearTorBoxApiKey = false
+    clearPremiumizeApiKey = false
     hasStoredTmdbApiKey = !!d.hasTmdbApiKey
     hasStoredTvdbApiKey = !!d.hasTvdbApiKey
     hasStoredTraktClientSecret = !!d.hasTraktClientSecret
@@ -1017,6 +1039,7 @@
     syncMediaSourceLimitVisibility()
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
     setSecretPlaceholder('torBoxApiKey', hasStoredTorBoxApiKey, 'Enter your TorBox API key')
+    setSecretPlaceholder('premiumizeApiKey', hasStoredPremiumizeApiKey, 'Enter your Premiumize API key')
     setSecretPlaceholder('tmdbApiKey', hasStoredTmdbApiKey, 'Enter your TMDB API key')
     setSecretPlaceholder('tvdbApiKey', hasStoredTvdbApiKey, 'Enter your TVDB API key')
     document.getElementById('serverUrl').value         = d.serverUrl         || ''
@@ -1475,6 +1498,10 @@
     await validateApiKey('tb')
   }
 
+  async function validatePremiumize() {
+    await validateApiKey('pm')
+  }
+
   async function validateTMDB() {
     await validateApiKey('tmdb')
   }
@@ -1545,6 +1572,7 @@
   async function saveSettings() {
     const rdApiKey = document.getElementById('rdApiKey').value
     const torBoxApiKey = document.getElementById('torBoxApiKey').value
+    const premiumizeApiKey = document.getElementById('premiumizeApiKey').value
     const tmdbApiKey = document.getElementById('tmdbApiKey').value
     const tvdbApiKey = document.getElementById('tvdbApiKey').value
     const traktClientSecret = document.getElementById('traktClientSecret').value
@@ -1572,8 +1600,10 @@
       mdblistLists: mdblistEntries,
       ...(rdApiKey ? { rdApiKey } : {}),
       ...(torBoxApiKey ? { torBoxApiKey } : {}),
+      ...(premiumizeApiKey ? { premiumizeApiKey } : {}),
       ...(clearRdApiKey ? { rdApiKey: '' } : {}),
       ...(clearTorBoxApiKey ? { torBoxApiKey: '' } : {}),
+      ...(clearPremiumizeApiKey ? { premiumizeApiKey: '' } : {}),
       ...(tmdbApiKey ? { tmdbApiKey } : {}),
       ...(tvdbApiKey ? { tvdbApiKey } : {}),
       ...(traktClientSecret ? { traktClientSecret } : {}),

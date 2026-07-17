@@ -2180,7 +2180,7 @@ async function playbackMediaSourcesFor(
     playbackClient: string
   },
 ) {
-  if (opts.buildPlaybackMediaSources) {
+  if (config.mediaSourceSelection && opts.buildPlaybackMediaSources) {
     const sources = await opts.buildPlaybackMediaSources(input).catch(() => [])
     if (sources.length) return sources
   }
@@ -2870,7 +2870,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       runtimeTicks: number
     },
   ) {
-    if (!config.mediaSourceSelection) return item
     return addDetailMediaSources(item, headers, {
       itemId: input.itemId,
       sourceId: input.sourceId,
@@ -2891,7 +2890,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       runtimeTicks: number
     },
   ) {
-    if (!config.mediaSourceSelection) return item
     return addDetailMediaSources(item, headers, {
       itemId: input.itemId,
       sourceId: input.sourceId,
@@ -2955,7 +2953,6 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (stremioEpisode) {
       if (!await canUserAccessStremioMeta(currentUser, stremioEpisode.series, 'series')) return reply.code(404).send({ error: 'Not found' })
       const item = stremioEpisodeToItem(stremioEpisode.series, stremioEpisode.episode) as Record<string, unknown>
-      if (!config.mediaSourceSelection) return item
       const { series, episode } = stremioEpisode
       const externalId = episode.id || `${series.id}:${stremioEpisodeSeasonNumber(episode)}:${stremioEpisodeNumber(episode)}`
       const playPath = `/play/stremio/series/${encodeURIComponent(externalId)}`
@@ -3011,7 +3008,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       if (!ep) return reply.code(404).send({ error: 'Not found' })
       if (!isEpisodeVisibleToLibrary(ep)) return reply.code(404).send({ error: 'Not found' })
       const item = episodeToItem(ep, show, currentUser.id) as Record<string, unknown>
-      if (!config.mediaSourceSelection || !show.imdbId) return item
+      if (!show.imdbId) return item
       const playPath = `/play/${show.imdbId}/${ep.seasonNumber}/${ep.episodeNumber}`
       return addDetailMediaSources(item, headers, {
         itemId: id,

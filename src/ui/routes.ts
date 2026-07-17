@@ -96,7 +96,7 @@ const STATIC_MIME: Record<string, string> = {
   css: 'text/css',
 }
 
-type ApiKeyService = 'rd' | 'tmdb' | 'tvdb' | 'tb'
+type ApiKeyService = 'rd' | 'tmdb' | 'tvdb' | 'tb' | 'pm'
 type LibraryStatusFilter = 'all' | 'available' | 'pending' | 'hidden' | 'manual' | 'list'
 
 interface TvdbValidationResponse {
@@ -109,17 +109,19 @@ function apiKeyServiceLabel(service: ApiKeyService): string {
   if (service === 'rd') return 'Real-Debrid'
   if (service === 'tmdb') return 'TMDB'
   if (service === 'tb') return 'TorBox'
+  if (service === 'pm') return 'Premiumize'
   return 'TVDB'
 }
 
 function isApiKeyService(value: unknown): value is ApiKeyService {
-  return value === 'rd' || value === 'tmdb' || value === 'tvdb' || value === 'tb'
+  return value === 'rd' || value === 'tmdb' || value === 'tvdb' || value === 'tb' || value === 'pm'
 }
 
 function configuredApiKeyForService(service: ApiKeyService): string {
   if (service === 'rd') return getSetting('rdApiKey') || config.rdApiKey
   if (service === 'tmdb') return config.tmdbApiKey
   if (service === 'tb') return getSetting('torBoxApiKey') || config.torBoxApiKey
+  if (service === 'pm') return getSetting('premiumizeApiKey') || config.premiumizeApiKey
   return config.tvdbApiKey
 }
 
@@ -174,10 +176,24 @@ async function validateTvdbApiKey(key: string) {
   }
 }
 
+async function validatePremiumizeApiKey(key: string) {
+  const res = await fetch('https://www.premiumize.me/api/account/info', {
+    headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) throw new Error(`Premiumize rejected the key (${res.status}).`)
+  const json = await res.json() as { status?: string; customer_id?: string }
+  if (json.status !== 'success') throw new Error('Premiumize rejected the key.')
+  return {
+    label: json.customer_id ? `Account: ${json.customer_id}` : 'Premiumize account verified',
+  }
+}
+
 async function validateApiKeyForService(service: ApiKeyService, key: string) {
   if (service === 'rd') return validateRealDebridApiKey(key)
   if (service === 'tmdb') return validateTmdbApiKey(key)
   if (service === 'tb') return validateTorBoxApiKey(key)
+  if (service === 'pm') return validatePremiumizeApiKey(key)
   return validateTvdbApiKey(key)
 }
 
@@ -750,6 +766,7 @@ export async function uiRoutes(app: FastifyInstance) {
       hasSootioUrl:      !!getSetting('sootioUrl'),
       hasRdApiKey:       !!getSetting('rdApiKey'),
       hasTorBoxApiKey:   !!getSetting('torBoxApiKey'),
+      hasPremiumizeApiKey: !!getSetting('premiumizeApiKey'),
       torBoxCleanupEnabled: getSetting('torBoxCleanupMode') !== 'keep',
       hasTmdbApiKey:     !!getSetting('tmdbApiKey'),
       hasTvdbApiKey:     !!getSetting('tvdbApiKey'),
@@ -836,10 +853,15 @@ export async function uiRoutes(app: FastifyInstance) {
     if (typeof body.torBoxApiKey === 'string') {
       setSetting('torBoxApiKey', body.torBoxApiKey.trim())
     }
+    if (typeof body.premiumizeApiKey === 'string') {
+      setSetting('premiumizeApiKey', body.premiumizeApiKey.trim())
+    }
     const storedRdApiKey = getSetting('rdApiKey') || ''
     const storedTorBoxApiKey = getSetting('torBoxApiKey') || ''
+    const storedPremiumizeApiKey = getSetting('premiumizeApiKey') || ''
     config.rdApiKey = storedRdApiKey
     config.torBoxApiKey = storedTorBoxApiKey
+    config.premiumizeApiKey = storedPremiumizeApiKey
     if (typeof body.streamProviderUrls === 'string') {
       setSetting('streamProviderUrls', parseStreamProviderUrls(body.streamProviderUrls).join('\n'))
       setSetting('rdStreamProviderUrls', '')
