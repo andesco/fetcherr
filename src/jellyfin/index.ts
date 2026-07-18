@@ -1368,7 +1368,10 @@ function stremioSearchMetaToItem(
   const isMovie = mediaType === 'movie'
   const visibleEpisodeCount = isMovie ? undefined : visibleStremioEpisodesFromMeta(meta).length
   const year = stremioMetaYear(meta)
-  const date = meta.released ? `${meta.released.slice(0, 10)}T00:00:00.0000000Z` : year ? `${year}-01-01T00:00:00.0000000Z` : undefined
+  const releasedDate = meta.released?.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
+  const date = releasedDate
+    ? `${releasedDate}T00:00:00.0000000Z`
+    : year ? `${year}-07-01T12:00:00.0000000Z` : undefined
   return {
     Id:                 id,
     ServerId:           SERVER_GUID,
