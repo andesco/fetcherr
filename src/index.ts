@@ -211,7 +211,7 @@ const PLAYBACK_CANDIDATE_TTL_MS = 10 * 60 * 1000
 const playbackItemPaths = new Map<string, { playPath: string; expiresAt: number }>()
 const playbackClientNames = new Map<string, { clientName: string; expiresAt: number }>()
 const torBoxPlaybackUrls = new Map<string, { url: string; expiresAt: number }>()
-const playbackCandidates = new Map<string, { stream: Stream; playPath: string; label: string; fileHint?: string; expiresAt: number }>()
+const playbackCandidates = new Map<string, { stream: Stream; itemId: string; playPath: string; label: string; fileHint?: string; expiresAt: number }>()
 
 class PlaybackResolutionError extends Error {
   constructor(
@@ -1126,17 +1126,23 @@ async function resolvePlayableStream(
   return { url: best.url }
 }
 
-function rememberPlaybackCandidate(playPath: string, label: string, stream: Stream, fileHint?: string): string {
+function rememberPlaybackCandidate(itemId: string, playPath: string, label: string, stream: Stream, fileHint?: string): string {
   cleanupPlaybackPrewarmCache()
   const token = randomBytes(16).toString('hex')
   playbackCandidates.set(token, {
     stream,
+    itemId,
     playPath,
     label,
     fileHint,
     expiresAt: Date.now() + PLAYBACK_CANDIDATE_TTL_MS,
   })
   return token
+}
+
+function validatePlaybackCandidate(token: string, itemId: string): boolean {
+  cleanupPlaybackPrewarmCache()
+  return playbackCandidates.get(token)?.itemId === itemId
 }
 
 function getPlaybackCandidate(token: string | undefined, playPath: string) {
@@ -1548,7 +1554,7 @@ async function buildPlaybackMediaSources(input: {
     if (!usable.length) return [fallbackSource]
 
     return usable.map((stream, index) => {
-      const candidate = rememberPlaybackCandidate(input.playPath, label, stream, fileHint)
+      const candidate = rememberPlaybackCandidate(input.itemId, input.playPath, label, stream, fileHint)
       const sourceId = `${input.itemId}:candidate:${candidate}`
       const sourceName = streamOptionName(stream, input.name, index)
       return playbackMediaSource(
@@ -1856,9 +1862,9 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   }
 })
 
-await app.register(jellyfinRoutes, { prewarmPlayback, registerPlaybackItem, registerPlaybackClient, touchPlaybackItem, stopPlaybackItem, buildPlaybackMediaSources })
-await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback, registerPlaybackItem, registerPlaybackClient, touchPlaybackItem, stopPlaybackItem, buildPlaybackMediaSources })
-await app.register(jellyfinRoutes, { prefix: '/search', searchOnly: true, prewarmPlayback, registerPlaybackItem, registerPlaybackClient, touchPlaybackItem, stopPlaybackItem, buildPlaybackMediaSources })
+await app.register(jellyfinRoutes, { prewarmPlayback, registerPlaybackItem, registerPlaybackClient, touchPlaybackItem, stopPlaybackItem, validatePlaybackCandidate, buildPlaybackMediaSources })
+await app.register(jellyfinRoutes, { prefix: '/emby', prewarmPlayback, registerPlaybackItem, registerPlaybackClient, touchPlaybackItem, stopPlaybackItem, validatePlaybackCandidate, buildPlaybackMediaSources })
+await app.register(jellyfinRoutes, { prefix: '/search', searchOnly: true, prewarmPlayback, registerPlaybackItem, registerPlaybackClient, touchPlaybackItem, stopPlaybackItem, validatePlaybackCandidate, buildPlaybackMediaSources })
 await app.register(uiRoutes)
 
 // ── Trakt auth ────────────────────────────────────────────────────────────────

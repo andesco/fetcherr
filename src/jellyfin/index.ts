@@ -109,6 +109,7 @@ type JellyfinRouteOptions = {
   registerPlaybackClient?: (playPath: string, clientName: string) => void
   touchPlaybackItem?: (itemId: string) => void
   stopPlaybackItem?: (itemId: string) => void
+  validatePlaybackCandidate?: (candidate: string, itemId: string) => boolean
   buildPlaybackMediaSources?: (input: {
     itemId: string
     sourceId: string
@@ -1342,9 +1343,17 @@ function stremioSearchTypeLabel(includeTypes: string): string {
 function searchMovieAutoplayItem(item: Record<string, unknown>): Record<string, unknown> {
   if (item.Type !== 'Movie') return item
   const copy = { ...item }
+  const providerIds = copy.ProviderIds as Record<string, unknown> | undefined
+  const tmdbId = providerIds?.Tmdb
   copy.PlayAccess = 'Full'
   copy.IsPlayable = true
   copy.CanDownload = true
+  copy.LocationType = 'Remote'
+  copy.ParentId = null
+  copy.Path = copy.Path ?? (tmdbId
+    ? `fetcherr://tmdb/movie/${encodeURIComponent(String(tmdbId))}`
+    : `fetcherr://search/movie/${encodeURIComponent(String(copy.Id ?? 'unknown'))}`)
+  copy.EnableMediaSourceDisplay = true
   delete copy.MediaSources
   delete copy.AlternateMediaSources
   delete copy.MediaSourceCount
@@ -1368,7 +1377,10 @@ function stremioSearchMetaToItem(
   const isMovie = mediaType === 'movie'
   const visibleEpisodeCount = isMovie ? undefined : visibleStremioEpisodesFromMeta(meta).length
   const year = stremioMetaYear(meta)
-  const date = meta.released ? `${meta.released.slice(0, 10)}T00:00:00.0000000Z` : year ? `${year}-01-01T00:00:00.0000000Z` : undefined
+  const releasedDate = meta.released?.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
+  const date = releasedDate
+    ? `${releasedDate}T00:00:00.0000000Z`
+    : year ? `${year}-07-01T12:00:00.0000000Z` : undefined
   return {
     Id:                 id,
     ServerId:           SERVER_GUID,
@@ -1800,10 +1812,24 @@ function searchDisabledPlaybackInfo(origin: string) {
   }
 }
 
-function searchDisabledResponse(includeTypes: string, limit: number, offset: number) {
+function withoutExcludedLocationTypes<T extends Record<string, unknown>>(
+  items: T[],
+  excludedLocationTypes: ReadonlySet<string>,
+): T[] {
+  if (!excludedLocationTypes.size) return items
+  return items.filter(item => !excludedLocationTypes.has(String(item.LocationType ?? '').toLowerCase()))
+}
+
+function searchDisabledResponse(
+  includeTypes: string,
+  limit: number,
+  offset: number,
+  excludedLocationTypes: ReadonlySet<string>,
+) {
+  const items = withoutExcludedLocationTypes([searchDisabledItem(includeTypes)], excludedLocationTypes)
   return {
-    Items: offset > 0 || limit <= 0 ? [] : [searchDisabledItem(includeTypes)],
-    TotalRecordCount: 1,
+    Items: pagedItems(items, offset, limit),
+    TotalRecordCount: items.length,
     StartIndex: offset,
   }
 }
@@ -1817,6 +1843,7 @@ async function buildSearchResultItems(
   offset: number,
   user: AppUser,
   searchOnly = false,
+  excludedLocationTypes: ReadonlySet<string> = new Set(),
 ) {
   const wantMovies = !includeTypes || includeTypes.includes('movie')
   const wantShows = !includeTypes || includeTypes.includes('series')
@@ -1868,14 +1895,14 @@ async function buildSearchResultItems(
     return mediaType === 'movie' ? searchMovieAutoplayItem(item) : item
   }))
 
-  const combined = [
+  const combined = withoutExcludedLocationTypes([
     ...localMovies.map(movie => searchMovieAutoplayItem(movieToSearchItem(movie) as Record<string, unknown>)),
     ...localShows.map(show => showToSeriesItem(show, user.id)),
     ...stremioSearchItems,
-  ]
+  ], excludedLocationTypes)
 
   if (searchOnly && !combined.length && !externalSearchEnabled) {
-    return searchDisabledResponse(includeTypes, limit, offset)
+    return searchDisabledResponse(includeTypes, limit, offset, excludedLocationTypes)
   }
 
   return {
@@ -2450,11 +2477,17 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const SortOrder       = q.sortorder
     const ParentId        = q.parentid
     const includeTypes    = (q.includeitemtypes ?? '').toLowerCase()
+    const excludedLocationTypes = new Set(
+      (q.excludelocationtypes ?? '')
+        .split(',')
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean),
+    )
     const limit           = q.limit ? parseInt(q.limit) : 10_000
     const offset          = parseInt(q.startindex ?? '0')
 
     if (opts.searchOnly && SearchTerm) {
-      return buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user, true)
+      return buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user, true, excludedLocationTypes)
     }
 
     // ── Shows folder ───────────────────────────────────────────────────────────
@@ -2496,7 +2529,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       }
       // Default: series list
       if (SearchTerm) {
-        return buildSearchResultItems(SearchTerm, 'series', SortBy, SortOrder, limit, offset, user)
+        return buildSearchResultItems(SearchTerm, 'series', SortBy, SortOrder, limit, offset, user, false, excludedLocationTypes)
       }
       const allShows = filterShowsForUser(user, listShows({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() }))
       return { Items: pagedItems(allShows, offset, limit).map(show => showToSeriesItem(show, user.id)), TotalRecordCount: allShows.length, StartIndex: offset }
@@ -2611,7 +2644,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
 
     // ── Search: movies + shows ─────────────────────────────────────────────────
     if (SearchTerm) {
-      return buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user)
+      return buildSearchResultItems(SearchTerm, includeTypes, SortBy, SortOrder, limit, offset, user, false, excludedLocationTypes)
     }
 
     // ── No parentId: route by includeItemTypes or return folders ─────────────
@@ -2658,7 +2691,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return { Items: [], TotalRecordCount: 0, StartIndex: offset }
     }
     if (SearchTerm) {
-      return buildSearchResultItems(SearchTerm, 'movie', SortBy, SortOrder, limit, offset, user)
+      return buildSearchResultItems(SearchTerm, 'movie', SortBy, SortOrder, limit, offset, user, false, excludedLocationTypes)
     }
     const movies = filterMoviesForUser(user, listMovies({ search: SearchTerm, sortBy: SortBy, sortOrder: SortOrder, limit: 10_000, offset: 0, userId: user.id, ...apiLibraryFilter() }))
     return { Items: pagedItems(movies, offset, limit).map(movie => movieToItem(movie, user.id)), TotalRecordCount: movies.length, StartIndex: offset }
@@ -3675,10 +3708,16 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const mediaSourceId = query?.mediaSourceId ?? query?.MediaSourceId
     const sessionMatches = (query?.playSessionId ?? query?.PlaySessionId) === `fetcherr-${id}`
     const sourceMatches = (query?.mediaSourceId ?? query?.MediaSourceId) === id
+    const candidate = candidateTokenFromMediaSourceId(mediaSourceId)
+    const candidateMatches = Boolean(
+      candidate
+      && mediaSourceId?.startsWith(`${id}:candidate:`)
+      && opts.validatePlaybackCandidate?.(candidate, id),
+    )
     const headersWithToken = query?.api_key
       ? { ...req.headers as Record<string, string | string[] | undefined>, 'x-emby-token': query.api_key }
       : req.headers as Record<string, string | string[] | undefined>
-    const user = requestUser(headersWithToken) ?? ((sessionMatches || sourceMatches) ? fallbackUser() : null)
+    const user = requestUser(headersWithToken) ?? ((sessionMatches || sourceMatches || candidateMatches) ? fallbackUser() : null)
 
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
 
