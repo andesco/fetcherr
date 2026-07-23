@@ -84,6 +84,44 @@ function saveToken(accessToken: string, refreshToken: string, expiresAt: Date): 
       refresh_token = excluded.refresh_token,
       expires_at    = excluded.expires_at
   `).run(accessToken, refreshToken, expiresAt.toISOString())
+  clearTraktAuthError()
+}
+
+// ── Auth error tracking ──────────────────────────────────────────────────────
+// Trakt free accounts now allow only one connected Community App — connecting
+// another app revokes fetcherr's token immediately, independent of its expiry.
+// Track that here so it survives restarts and can be surfaced in the UI/logs.
+
+const AUTH_ERROR_KEY = 'trakt_auth_error'
+
+export function getTraktAuthError(): { message: string; at: string } | null {
+  const raw = getSetting(AUTH_ERROR_KEY)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function recordTraktAuthError(message: string): void {
+  console.error(`trakt: ${message}`)
+  setSetting(AUTH_ERROR_KEY, JSON.stringify({ message, at: new Date().toISOString() }))
+}
+
+function clearTraktAuthError(): void {
+  if (getSetting(AUTH_ERROR_KEY)) setSetting(AUTH_ERROR_KEY, '')
+}
+
+/** Throws on a non-ok Trakt response; on 401 also records a reconnect-needed auth error. */
+function assertTraktOk(status: number, action: string): void {
+  if (status === 200) return
+  if (status === 401) {
+    recordTraktAuthError(
+      `Trakt returned 401 on ${action} — the connection was revoked (free accounts allow only one connected app at a time). Reconnect Trakt.`
+    )
+  }
+  throw new Error(`Trakt ${status} ${action}`)
 }
 
 // ── Trakt HTTP ─────────────────────────────────────────────────────────────────
@@ -148,6 +186,12 @@ async function refreshAccessToken(refreshToken: string): Promise<StoredToken> {
   })
   if (status !== 200) {
     const detail = data == null ? '' : ` ${JSON.stringify(data)}`
+    const errorCode = (data as { error?: string } | null)?.error
+    if (status === 401 || (status === 400 && errorCode === 'invalid_grant')) {
+      recordTraktAuthError(
+        `Trakt refresh token was rejected (${errorCode ?? status}) — reconnect Trakt (free accounts allow only one connected app at a time). ${detail}`.trim()
+      )
+    }
     throw new Error(`Token refresh failed: ${status}${detail}`)
   }
   const d = data as { access_token: string; refresh_token: string; expires_in: number; created_at: number }
@@ -180,14 +224,21 @@ export async function getValidToken(): Promise<string | null> {
   return token.accessToken
 }
 
-export function tokenStatus(): { authenticated: boolean; expiresAt?: string; nextRefreshAt?: string } {
+export function tokenStatus(): {
+  authenticated: boolean
+  expiresAt?: string
+  nextRefreshAt?: string
+  authError?: { message: string; at: string }
+} {
   const token = loadToken()
-  if (!token) return { authenticated: false }
+  const authError = getTraktAuthError() ?? undefined
+  if (!token) return { authenticated: false, authError }
   const nextRefreshAt = new Date(token.expiresAt.getTime() - 24 * 60 * 60 * 1000)
   return {
     authenticated: token.expiresAt > new Date(),
     expiresAt:     token.expiresAt.toISOString(),
     nextRefreshAt: nextRefreshAt.toISOString(),
+    authError,
   }
 }
 
@@ -389,7 +440,7 @@ export async function syncTraktWatchlist(): Promise<{ synced: number; total: num
         signal: AbortSignal.timeout(15_000),
       }
     )
-    if (!res.ok) throw new Error(`Trakt ${res.status} fetching watchlist page ${page}`)
+    assertTraktOk(res.status, `fetching watchlist page ${page}`)
 
     const pageCount = parseInt(res.headers.get('X-Pagination-Page-Count') ?? '1')
     totalPages = Math.min(pageCount, 10)
@@ -399,6 +450,7 @@ export async function syncTraktWatchlist(): Promise<{ synced: number; total: num
     page++
   }
 
+  clearTraktAuthError()
   console.log(`trakt: found ${items.length} movies in watchlist`)
 
   let synced = 0
@@ -468,7 +520,7 @@ export async function syncTraktShowsWatchlist(): Promise<{ synced: number; total
         signal: AbortSignal.timeout(15_000),
       }
     )
-    if (!res.ok) throw new Error(`Trakt ${res.status} fetching shows watchlist page ${page}`)
+    assertTraktOk(res.status, `fetching shows watchlist page ${page}`)
 
     const pageCount = parseInt(res.headers.get('X-Pagination-Page-Count') ?? '1')
     totalPages = Math.min(pageCount, 10)
@@ -478,6 +530,7 @@ export async function syncTraktShowsWatchlist(): Promise<{ synced: number; total
     page++
   }
 
+  clearTraktAuthError()
   console.log(`trakt: found ${items.length} shows in watchlist`)
 
   let synced = 0
@@ -548,7 +601,7 @@ export async function syncTraktList(
         signal: AbortSignal.timeout(15_000),
       }
     )
-    if (!res.ok) throw new Error(`Trakt ${res.status} fetching list "${slug}" page ${page}`)
+    assertTraktOk(res.status, `fetching list "${slug}" page ${page}`)
     const pageCount = parseInt(res.headers.get('X-Pagination-Page-Count') ?? '1')
     totalPages = Math.min(pageCount, 10)
     const data = await res.json() as TraktListItem[]
@@ -557,6 +610,7 @@ export async function syncTraktList(
     page++
   }
 
+  clearTraktAuthError()
   console.log(`trakt: list "${slug}" has ${items.length} items`)
 
   let movies = 0
@@ -634,7 +688,7 @@ export async function syncTraktWatchedStatus(): Promise<{ movies: number; episod
         undefined,
         accessToken,
       )
-      if (status !== 200) throw new Error(`Trakt watched-status fetch failed: ${status} for ${path}`)
+      assertTraktOk(status, `watched-status fetch for ${path}`)
 
       const items = (data as T[]) ?? []
       if (!items.length) break
@@ -674,6 +728,7 @@ export async function syncTraktWatchedStatus(): Promise<{ movies: number; episod
     }
   })
 
+  clearTraktAuthError()
   console.log(`trakt: watched-status sync complete — ${syncedMovies} movies, ${syncedEpisodes} episodes marked for admin`)
   return { movies: syncedMovies, episodes: syncedEpisodes }
 }

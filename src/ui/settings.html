@@ -1332,6 +1332,16 @@
     const res = await fetch('/trakt/auth')
     if (!res.ok) return
     const d = await res.json()
+    if (d.authError && !traktAuthPending) {
+      setPill('traktStatus', 'Reconnect needed', 'err')
+      document.getElementById('traktMeta').textContent =
+        `${d.authError.message} (${new Date(d.authError.at).toLocaleString()})`
+      const callout = document.getElementById('traktCallout')
+      callout.className = 'callout error'
+      callout.style.display = ''
+      callout.textContent = d.authError.message
+      return
+    }
     if (d.authenticated) {
       traktAuthPending = false
       if (traktAuthPollId) {
@@ -1534,6 +1544,7 @@
     traktAuthPending = true
     if (traktAuthPollId) clearInterval(traktAuthPollId)
     if (traktAuthTimeoutId) clearTimeout(traktAuthTimeoutId)
+    callout.className = 'callout info'
     callout.style.display = ''
     callout.innerHTML = `1. Open <a href="${d.verificationUrl}" target="_blank">${d.verificationUrl}</a>\n2. Enter code: <strong>${d.code}</strong>\n3. This page will update automatically once authorized.`
     setPill('traktStatus', 'Awaiting authorization', 'pending')
