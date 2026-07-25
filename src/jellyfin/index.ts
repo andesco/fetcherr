@@ -16,6 +16,7 @@ import {
   fetchMovieOfficialRatingByIds,
   fetchShowOfficialRatingByIds,
   fetchAndCacheSeasonDetails, ensureShowSeasonsCached,
+  fetchMovieRecommendations, fetchShowRecommendations,
 } from '../tmdb.js'
 import type { Movie, Show, Season, Episode } from '../db.js'
 import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
@@ -1912,6 +1913,27 @@ async function buildSearchResultItems(
   }
 }
 
+async function buildSimilarItems(itemId: string, user: AppUser, limit: number) {
+  const movieTmdbId = idToSearchMovieTmdb(itemId) ?? idToTmdb(itemId)
+  const showTmdbId = idToSearchShowTmdb(itemId) ?? idToShowTmdb(itemId)
+
+  if (movieTmdbId) {
+    const recIds = await fetchMovieRecommendations(movieTmdbId, limit)
+    const movies = (await Promise.all(recIds.map(id => fetchMovieByTmdbId(id))))
+      .filter((m): m is Movie => Boolean(m) && canUserAccessMovie(user, m as Movie))
+    return movies.map(m => searchMovieAutoplayItem(movieToSearchItem(m) as Record<string, unknown>))
+  }
+
+  if (showTmdbId) {
+    const recIds = await fetchShowRecommendations(showTmdbId, limit)
+    const shows = (await Promise.all(recIds.map(id => fetchShowByTmdbId(id))))
+      .filter((s): s is Show => Boolean(s) && canUserAccessShow(user, s as Show))
+    return shows.map(s => showToSearchSeriesItem(s))
+  }
+
+  return []
+}
+
 function episodeRuntimeTicks(ep: Episode): number {
   return (ep.runtimeMins || 45) * 60 * 10_000_000
 }
@@ -3377,7 +3399,16 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   })
 
   // Stubs for endpoints Infuse probes but we don't need to implement
-  app.get('/Items/:itemId/Similar', async () => ({ Items: [], TotalRecordCount: 0, StartIndex: 0 }))
+  app.get('/Items/:itemId/Similar', async (req, reply) => {
+    const { itemId } = req.params as { itemId: string }
+    const user = requireRequestUser(req.headers as Record<string, string | string[] | undefined>, reply)
+    if (!user) return
+    const q = req.query as Record<string, string | string[] | undefined>
+    const limit = parseInt(queryValue(q.limit ?? q.Limit)) || 12
+    if (!config.tmdbApiKey) return { Items: [], TotalRecordCount: 0, StartIndex: 0 }
+    const items = await buildSimilarItems(itemId, user, limit)
+    return { Items: items, TotalRecordCount: items.length, StartIndex: 0 }
+  })
   app.get('/Items/:itemId/LocalTrailers', async () => [])
   app.get('/Items/:itemId/SpecialFeatures', async () => [])
   app.get('/Users/:userId/Items/:itemId/LocalTrailers', async () => [])

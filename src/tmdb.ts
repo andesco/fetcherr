@@ -306,6 +306,36 @@ export async function fetchMovieCollection(movieTmdbId: number): Promise<MovieCo
   }
 }
 
+export async function fetchMovieRecommendations(tmdbId: number, limit = 20): Promise<number[]> {
+  if (!config.tmdbApiKey) return []
+  try {
+    const r = await tmdbGet(`/movie/${tmdbId}/recommendations`) as { results?: TmdbMovieRaw[] }
+    let ids = (r.results ?? []).map(m => m.id)
+    if (!ids.length) {
+      const s = await tmdbGet(`/movie/${tmdbId}/similar`) as { results?: TmdbMovieRaw[] }
+      ids = (s.results ?? []).map(m => m.id)
+    }
+    return ids.slice(0, limit)
+  } catch {
+    return []
+  }
+}
+
+export async function fetchShowRecommendations(tmdbId: number, limit = 20): Promise<number[]> {
+  if (!config.tmdbApiKey) return []
+  try {
+    const r = await tmdbGet(`/tv/${tmdbId}/recommendations`) as { results?: TmdbShowRaw[] }
+    let ids = (r.results ?? []).map(s => s.id)
+    if (!ids.length) {
+      const s = await tmdbGet(`/tv/${tmdbId}/similar`) as { results?: TmdbShowRaw[] }
+      ids = (s.results ?? []).map(s => s.id)
+    }
+    return ids.slice(0, limit)
+  } catch {
+    return []
+  }
+}
+
 type TmdbImageKind = 'poster' | 'backdrop' | 'logo'
 
 function pickTmdbImageSize(kind: TmdbImageKind, requestedWidth?: number | null): string {
