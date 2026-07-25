@@ -140,6 +140,37 @@ export function parseMdblistLists(value: string): MdblistListEntry[] {
     .map(url => ({ url }))
 }
 
+export interface DiscoverCategoryDef {
+  slug: string
+  mediaType: 'movie' | 'show'
+  label: string
+}
+
+export const DISCOVER_CATEGORIES: DiscoverCategoryDef[] = [
+  { slug: 'trending-movies',   mediaType: 'movie', label: 'Trending Movies' },
+  { slug: 'trending-shows',    mediaType: 'show',  label: 'Trending Shows' },
+  { slug: 'popular-movies',    mediaType: 'movie', label: 'Popular Movies' },
+  { slug: 'popular-shows',     mediaType: 'show',  label: 'Popular Shows' },
+  { slug: 'top-rated-movies',  mediaType: 'movie', label: 'Top Rated Movies' },
+  { slug: 'top-rated-shows',   mediaType: 'show',  label: 'Top Rated Shows' },
+  { slug: 'upcoming-movies',   mediaType: 'movie', label: 'Upcoming Movies' },
+  { slug: 'on-the-air-shows',  mediaType: 'show',  label: 'On The Air' },
+]
+
+export type DiscoverPresentationMode = 'folder' | 'collection' | 'library'
+const DISCOVER_PRESENTATION_MODES = new Set<string>(['folder', 'collection', 'library'])
+
+export function parseDiscoverPresentationMode(value: string | undefined, fallback: DiscoverPresentationMode = 'folder'): DiscoverPresentationMode {
+  const normalized = (value ?? '').trim().toLowerCase()
+  return DISCOVER_PRESENTATION_MODES.has(normalized) ? normalized as DiscoverPresentationMode : fallback
+}
+
+export function discoverPresentationFromMode(mode: DiscoverPresentationMode): ListPresentation {
+  if (mode === 'collection') return { includeInLibrary: false, showAsFolder: false, showAsCollection: true }
+  if (mode === 'library') return { includeInLibrary: true, showAsFolder: false, showAsCollection: false }
+  return { includeInLibrary: false, showAsFolder: true, showAsCollection: false }
+}
+
 export function parseBooleanSetting(value: string | undefined, fallback = false): boolean {
   if (value == null || value === '') return fallback
   const normalized = value.trim().toLowerCase()
@@ -273,6 +304,8 @@ export const config = {
   mdblistLists: parseMdblistLists(process.env.MDBLIST_LISTS ?? ''),
   mdblistFolders: parseFoldersSetting(process.env.MDBLIST_FOLDERS, false),
   mdblistMaxItems: parsePositiveIntegerSetting(process.env.MDBLIST_MAX_ITEMS, 1000),
+  discoverEnabled: parseBooleanSetting(process.env.DISCOVER_ENABLED, false),
+  discoverPresentationMode: parseDiscoverPresentationMode(process.env.DISCOVER_PRESENTATION_MODE),
   showAddDefaultMode: parseShowAddDefaultMode(process.env.SHOW_ADD_DEFAULT_MODE),
   movieReleaseMode: parseMovieReleaseMode(process.env.MOVIE_RELEASE_MODE),
   streamProviderUrls: parseStreamProviderUrls(process.env.STREAM_PROVIDER_URLS ?? ''),

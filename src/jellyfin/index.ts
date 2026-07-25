@@ -2,13 +2,14 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
-import { config, normalizeListPresentation, type ListFoldersSetting, type ListPresentation, type MdblistListEntry } from '../config.js'
+import { config, normalizeListPresentation, discoverPresentationFromMode, DISCOVER_CATEGORIES, type DiscoverCategoryDef, type ListFoldersSetting, type ListPresentation, type MdblistListEntry } from '../config.js'
+import { discoverSourceKey } from '../discover.js'
 import {
   listMovies, countMovies, getMovieByTmdbId,
   listUsers, getUserData, saveProgress, markPlayed, markUnplayed, listResumeItemIds, countResumeItems, getAllPlayedItemIds,
   getEffectiveShowMode, listShows, countShows, getShowByTmdbId,
   getSeasonsForShow, getSeason, getEpisodesForSeason, getAiredEpisodesForSeason, isMovieVisibleToLibrary, isEpisodeVisibleToLibrary, hasAnySourceItem,
-  authEnabled, canUserAccessKnownRating, canUserAccessMovie, canUserAccessShow, getDb, getUserById, getUserByUsername, hasRatingLimit, verifyUserCredentials, DEFAULT_ADMIN_USER_ID, isLibraryItemHidden, listSourceItems, type AppUser,
+  authEnabled, canUserAccessKnownRating, canUserAccessMovie, canUserAccessShow, getDb, getUserById, getUserByUsername, hasRatingLimit, verifyUserCredentials, DEFAULT_ADMIN_USER_ID, isLibraryItemHidden, listSourceItems, getPersonProfilePath, type AppUser,
 } from '../db.js'
 import {
   fetchMovieByTmdbId, posterUrl,
@@ -17,6 +18,7 @@ import {
   fetchShowOfficialRatingByIds,
   fetchAndCacheSeasonDetails, ensureShowSeasonsCached,
   fetchMovieRecommendations, fetchShowRecommendations,
+  type CreditPerson,
 } from '../tmdb.js'
 import type { Movie, Show, Season, Episode } from '../db.js'
 import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
@@ -39,6 +41,7 @@ import { searchTraktMetas } from '../trakt.js'
 //   Stremio Source:    md5(stremio:source:{mediaType}:{meta id}) 32 hex
 //   Stremio Season:    00000000-0000-4000-8008-{md5(series id/season) last 12 hex}
 //   Stremio Episode:   00000000-0000-4000-8009-{md5(series id/episode id) last 12 hex}
+//   Person:            00000000-0000-4000-800d-{tmdbId 12 hex}
 
 const MOVIES_FOLDER_ID = 'a0000000-0000-4000-8000-000000000001'
 const SHOWS_FOLDER_ID  = 'a0000000-0000-4000-8000-000000000002'
@@ -47,8 +50,25 @@ const SEARCH_DISABLED_ITEM_ID = 'a0000000-0000-4000-800a-000000000001'
 const SEARCH_DISABLED_RUNTIME_TICKS = 60 * 10_000_000
 const SERVER_GUID      = 'a0000000-0000-0000-0000-000000000001'
 const SEARCH_SERVER_GUID = 'a0000000-0000-0000-0000-00000000f001'
+const DISCOVER_FOLDER_ID = 'a0000000-0000-4000-8000-000000000003'
 // Keep old name as alias so existing code still compiles
 const FOLDER_ID = MOVIES_FOLDER_ID
+
+// Fixed per-category ids — folder-context and collection-context are distinct
+// so a category can independently show up as a top-level folder and/or a BoxSet
+// under Collections without id collisions.
+const DISCOVER_CATEGORY_FOLDER_IDS: Record<string, string> = Object.fromEntries(
+  DISCOVER_CATEGORIES.map((def, i) => [def.slug, `a0000000-0000-4000-800b-${(i + 1).toString(16).padStart(12, '0')}`]),
+)
+const DISCOVER_CATEGORY_COLLECTION_IDS: Record<string, string> = Object.fromEntries(
+  DISCOVER_CATEGORIES.map((def, i) => [def.slug, `a0000000-0000-4000-800c-${(i + 1).toString(16).padStart(12, '0')}`]),
+)
+const DISCOVER_FOLDER_ID_TO_SLUG: Record<string, string> = Object.fromEntries(
+  DISCOVER_CATEGORIES.map(def => [DISCOVER_CATEGORY_FOLDER_IDS[def.slug], def.slug]),
+)
+const DISCOVER_COLLECTION_ID_TO_SLUG: Record<string, string> = Object.fromEntries(
+  DISCOVER_CATEGORIES.map(def => [DISCOVER_CATEGORY_COLLECTION_IDS[def.slug], def.slug]),
+)
 
 const API_LIBRARY_FILTER = { availableOnly: true as const }
 
@@ -70,6 +90,18 @@ function isTraktEntryCollection(slug: string): boolean {
   return traktListPresentation(slug).showAsCollection
 }
 
+function discoverPresentation(): ListPresentation {
+  return discoverPresentationFromMode(config.discoverPresentationMode)
+}
+
+function isDiscoverFolderVisible(): boolean {
+  return config.discoverEnabled && discoverPresentation().showAsFolder
+}
+
+function isDiscoverCollectionVisible(): boolean {
+  return config.discoverEnabled && discoverPresentation().showAsCollection
+}
+
 function apiLibraryFilter(): { availableOnly: true; excludeSourceKeys?: string[] } {
   const mdblistKeys = config.mdblistLists
     .filter(e => !mdblistListPresentation(e).includeInLibrary)
@@ -77,7 +109,10 @@ function apiLibraryFilter(): { availableOnly: true; excludeSourceKeys?: string[]
   const traktKeys = config.traktLists
     .filter(slug => !traktListPresentation(slug).includeInLibrary)
     .map(slug => `trakt:list:${slug}`)
-  const keys = [...mdblistKeys, ...traktKeys]
+  const discoverKeys = config.discoverEnabled && !discoverPresentation().includeInLibrary
+    ? DISCOVER_CATEGORIES.map(def => discoverSourceKey(def.slug))
+    : []
+  const keys = [...mdblistKeys, ...traktKeys, ...discoverKeys]
   return keys.length ? { availableOnly: true, excludeSourceKeys: keys } : API_LIBRARY_FILTER
 }
 const READ_CACHE_TTL_MS = 3_000
@@ -121,7 +156,7 @@ type JellyfinRouteOptions = {
     playbackClient: string
   }) => Promise<Array<Record<string, unknown>>>
 }
-type ImageKind = 'poster' | 'backdrop' | 'logo'
+type ImageKind = 'poster' | 'backdrop' | 'logo' | 'profile'
 type ImageQuery = {
   tag?: string
   width?: string
@@ -148,6 +183,15 @@ function showTmdbToId(tmdbId: number): string {
 
 function idToShowTmdb(id: string): number | null {
   const m = id.match(/^00000000-0000-4000-8001-([0-9a-f]{12})$/i)
+  return m ? parseInt(m[1], 16) : null
+}
+
+function personTmdbToId(tmdbId: number): string {
+  return `00000000-0000-4000-800d-${tmdbId.toString(16).padStart(12, '0')}`
+}
+
+function idToPersonTmdb(id: string): number | null {
+  const m = id.match(/^00000000-0000-4000-800d-([0-9a-f]{12})$/i)
   return m ? parseInt(m[1], 16) : null
 }
 
@@ -718,6 +762,101 @@ function mdblistCollectionUrlForId(id: string | null | undefined): string | null
 function hasAnyCollections(): boolean {
   return config.traktLists.some(slug => isTraktEntryCollection(slug))
     || config.mdblistLists.some(e => mdblistListPresentation(e).showAsCollection)
+    || isDiscoverCollectionVisible()
+}
+
+// ── Discover (TMDB trending/popular/top-rated/upcoming) ────────────────────────
+// Items are synced into the real movies/shows tables (see src/discover.ts) tagged
+// with a `discover:<slug>` source key, so once synced they're ordinary library
+// items — same detail/season/episode/playback code path as everything else.
+// This block only builds the folder/collection browse structure around them.
+
+function idToDiscoverFolderSlug(id: string | null | undefined): string | null {
+  if (!id) return null
+  return isDiscoverFolderVisible() ? (DISCOVER_FOLDER_ID_TO_SLUG[id] ?? null) : null
+}
+
+function idToDiscoverCollectionSlug(id: string | null | undefined): string | null {
+  if (!id) return null
+  return isDiscoverCollectionVisible() ? (DISCOVER_COLLECTION_ID_TO_SLUG[id] ?? null) : null
+}
+
+function discoverCategoryMembers(user: AppUser, slug: string): CollectionMember[] {
+  return listSourceItems(discoverSourceKey(slug)).filter(item => {
+    if (isLibraryItemHidden(item.mediaType, item.tmdbId)) return false
+    if (item.mediaType === 'movie') {
+      const movie = getMovieByTmdbId(item.tmdbId)
+      return !!movie && canUserAccessMovie(user, movie)
+    }
+    const show = getShowByTmdbId(item.tmdbId)
+    return !!show && canUserAccessShow(user, show)
+  })
+}
+
+async function discoverCategoryContents(slug: string, user: AppUser): Promise<Record<string, unknown>[]> {
+  const members = discoverCategoryMembers(user, slug)
+  const items: Record<string, unknown>[] = []
+  for (const member of members) {
+    if (member.mediaType === 'movie') {
+      const movie = getMovieByTmdbId(member.tmdbId)
+      if (movie && canUserAccessMovie(user, movie)) items.push(movieToItem(movie, user.id))
+      continue
+    }
+    const show = getShowByTmdbId(member.tmdbId) ?? await fetchShowByTmdbId(member.tmdbId)
+    if (show && canUserAccessShow(user, show)) items.push(showToSeriesItem(show, user.id))
+  }
+  return items
+}
+
+function buildDiscoverCategoryFolderItem(def: DiscoverCategoryDef, count: number) {
+  const id = DISCOVER_CATEGORY_FOLDER_IDS[def.slug]
+  return {
+    Id: id, ServerId: SERVER_GUID, Name: def.label, SortName: def.label.toLowerCase(),
+    Type: 'CollectionFolder', CollectionType: 'boxsets', IsFolder: true,
+    CanDelete: false, CanDownload: false, PlayAccess: 'Full',
+    ChildCount: count, RecursiveItemCount: count,
+    ImageTags: { Primary: `discover:${def.slug}`, Backdrop: `discover:${def.slug}` },
+    UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: id },
+  }
+}
+
+function buildDiscoverCategoryCollectionItem(def: DiscoverCategoryDef, count: number) {
+  const id = DISCOVER_CATEGORY_COLLECTION_IDS[def.slug]
+  return {
+    Id: id, ServerId: SERVER_GUID, Name: def.label, SortName: def.label.toLowerCase(),
+    Type: 'BoxSet', CollectionType: 'boxsets', IsFolder: true,
+    CanDelete: false, CanDownload: false, PlayAccess: 'Full',
+    ChildCount: count, RecursiveItemCount: count,
+    ImageTags: { Primary: `discover:${def.slug}`, Backdrop: `discover:${def.slug}` },
+    UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: id },
+  }
+}
+
+function discoverFolderItemsForUser(user: AppUser) {
+  if (!isDiscoverFolderVisible()) return []
+  return DISCOVER_CATEGORIES.map(def => buildDiscoverCategoryFolderItem(def, discoverCategoryMembers(user, def.slug).length))
+}
+
+function discoverCollectionItemsForUser(user: AppUser) {
+  if (!isDiscoverCollectionVisible()) return []
+  return DISCOVER_CATEGORIES.map(def => buildDiscoverCategoryCollectionItem(def, discoverCategoryMembers(user, def.slug).length))
+}
+
+function buildDiscoverRootFolderItem(user: AppUser) {
+  const count = DISCOVER_CATEGORIES.reduce((sum, def) => sum + discoverCategoryMembers(user, def.slug).length, 0)
+  return {
+    Name:               'Discover',
+    Id:                 DISCOVER_FOLDER_ID,
+    ServerId:           SERVER_GUID,
+    Type:               'CollectionFolder',
+    CollectionType:     'boxsets',
+    IsFolder:           true,
+    Path:               '/discover',
+    ChildCount:         DISCOVER_CATEGORIES.length,
+    RecursiveItemCount: count,
+    ImageTags:          {},
+    UserData: { PlaybackPositionTicks: 0, PlayCount: 0, IsFavorite: false, Played: false, Key: DISCOVER_FOLDER_ID },
+  }
 }
 
 function buildMdblistCollectionItem(entry: MdblistListEntry, count: number) {
@@ -1107,6 +1246,17 @@ function detailStudios(studiosJson: string) {
   }))
 }
 
+function detailPeople(castJson: string) {
+  const people = parseJsonArray<CreditPerson>(castJson)
+  return people.map(person => ({
+    Name: person.name,
+    Id: personTmdbToId(person.id),
+    Role: person.role || undefined,
+    Type: person.type,
+    PrimaryImageTag: person.profilePath ? createHash('sha1').update(person.profilePath).digest('hex').slice(0, 16) : undefined,
+  }))
+}
+
 function externalUrls(type: 'movie' | 'show', imdbId: string, tmdbId: number) {
   const urls = []
   if (imdbId) urls.push({ Name: 'IMDb', Url: `https://www.imdb.com/title/${imdbId}` })
@@ -1172,6 +1322,7 @@ function movieToItem(m: Movie, userId = DEFAULT_ADMIN_USER_ID) {
     GenreItems:         genreItems(genres),
     Studios:            detailStudios(m.studiosJson),
     Tags:               parseJsonArray<string>(m.tagsJson),
+    People:             detailPeople(m.castJson),
     OfficialRating:     m.officialRating || undefined,
     CommunityRating:    m.communityRating || undefined,
     ExternalUrls:       externalUrls('movie', m.imdbId, m.tmdbId),
@@ -1221,6 +1372,7 @@ function showToSeriesItem(s: Show, userId = DEFAULT_ADMIN_USER_ID) {
     GenreItems:         genreItems(genres),
     Studios:            detailStudios(s.studiosJson),
     Tags:               parseJsonArray<string>(s.tagsJson),
+    People:             detailPeople(s.castJson),
     OfficialRating:     s.officialRating || undefined,
     CommunityRating:    s.communityRating || undefined,
     ExternalUrls:       externalUrls('show', s.imdbId, s.tmdbId),
@@ -1529,6 +1681,7 @@ function movieToSearchItem(m: Movie) {
     GenreItems:         genreItems(genres),
     Studios:            detailStudios(m.studiosJson),
     Tags:               [...parseJsonArray<string>(m.tagsJson), 'Not In Library'],
+    People:             detailPeople(m.castJson),
     OfficialRating:     m.officialRating || undefined,
     CommunityRating:    m.communityRating || undefined,
     ExternalUrls:       externalUrls('movie', m.imdbId, m.tmdbId),
@@ -1572,6 +1725,7 @@ function showToSearchSeriesItem(s: Show) {
     GenreItems:         genreItems(genres),
     Studios:            detailStudios(s.studiosJson),
     Tags:               [...parseJsonArray<string>(s.tagsJson), 'Not In Library'],
+    People:             detailPeople(s.castJson),
     OfficialRating:     s.officialRating || undefined,
     CommunityRating:    s.communityRating || undefined,
     ExternalUrls:       externalUrls('show', s.imdbId, s.tmdbId),
@@ -2401,6 +2555,9 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), CollectionType: 'boxsets', ItemId: mdblistFolderIdFromPath(p), Locations: [`/mdblist/${p}`] }
     }),
+    ...(isDiscoverFolderVisible()
+      ? [{ Name: 'Discover', CollectionType: 'boxsets', ItemId: DISCOVER_FOLDER_ID, Locations: ['/discover'] }]
+      : []),
   ]))
   app.get('/Library/SelectableMediaFolders', async () => null)
 
@@ -2416,6 +2573,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
     }),
+    ...(isDiscoverFolderVisible() ? [{ Name: 'Discover', Id: DISCOVER_FOLDER_ID, Type: 'boxsets' }] : []),
   ]))
   app.get('/UserViews/GroupingOptions', async () => opts.searchOnly ? [] : ([
     { Name: 'Movies', Id: MOVIES_FOLDER_ID, Type: 'movies' },
@@ -2428,6 +2586,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const p = mdblistListPathFromUrl(entry.url)
       return { Name: nameForMdblistUrl(entry.url), Id: mdblistFolderIdFromPath(p), Type: 'boxsets' }
     }),
+    ...(isDiscoverFolderVisible() ? [{ Name: 'Discover', Id: DISCOVER_FOLDER_ID, Type: 'boxsets' }] : []),
   ]))
 
   // Views — library sections
@@ -2463,6 +2622,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       ...(hasAnyCollections() ? [traktCollectionsFolderToItem(user)] : []),
       ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
       ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
+      ...(isDiscoverFolderVisible() ? [buildDiscoverRootFolderItem(user)] : []),
     ]
     return {
       Items: items,
@@ -2522,7 +2682,8 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       if (hasAnyCollections() && includeTypes.includes('boxset')) {
         const traktItems = traktCollectionItemsForUser(user)
         const mdblistItems = mdblistCollectionItems(user)
-        const collections = [...traktItems, ...mdblistItems]
+        const discoverItems = discoverCollectionItemsForUser(user)
+        const collections = [...traktItems, ...mdblistItems, ...discoverItems]
         return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
       }
       if (includeTypes.includes('season')) {
@@ -2646,10 +2807,26 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
     }
 
+    if (ParentId === DISCOVER_FOLDER_ID && isDiscoverFolderVisible()) {
+      const items = discoverFolderItemsForUser(user)
+      return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
+    }
+    const discoverFolderSlug = idToDiscoverFolderSlug(ParentId)
+    if (discoverFolderSlug) {
+      const items = await discoverCategoryContents(discoverFolderSlug, user)
+      return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
+    }
+    const discoverCollectionSlug = idToDiscoverCollectionSlug(ParentId)
+    if (discoverCollectionSlug) {
+      const items = await discoverCategoryContents(discoverCollectionSlug, user)
+      return { Items: pagedItems(items, offset, limit), TotalRecordCount: items.length, StartIndex: offset }
+    }
+
     if (ParentId === COLLECTIONS_FOLDER_ID && hasAnyCollections()) {
       const traktItems = traktCollectionItemsForUser(user)
       const mdblistItems = mdblistCollectionItems(user)
-      const collections = [...traktItems, ...mdblistItems]
+      const discoverItems = discoverCollectionItemsForUser(user)
+      const collections = [...traktItems, ...mdblistItems, ...discoverItems]
       return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
     }
 
@@ -2660,7 +2837,8 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     ) {
       const traktItems = traktCollectionItemsForUser(user)
       const mdblistItems = mdblistCollectionItems(user)
-      const collections = [...traktItems, ...mdblistItems]
+      const discoverItems = discoverCollectionItemsForUser(user)
+      const collections = [...traktItems, ...mdblistItems, ...discoverItems]
       return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
     }
 
@@ -2700,6 +2878,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         ...(hasAnyCollections() ? [traktCollectionsFolderToItem(user)] : []),
         ...config.traktLists.filter(slug => isTraktEntryVisible(slug)).map(slug => buildTraktFolderItem(slug, collectionMembersForUser(user, slug).length)),
         ...config.mdblistLists.filter(entry => isMdblistEntryVisible(entry)).map(entry => buildMdblistFolderItem(entry.url, mdblistFolderMembers(user, entry.url).length)),
+        ...(isDiscoverFolderVisible() ? [buildDiscoverRootFolderItem(user)] : []),
       ]
       return {
         Items: folders,
@@ -2983,6 +3162,19 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     if (id === COLLECTIONS_FOLDER_ID && hasAnyCollections()) {
       return traktCollectionsFolderToItem(currentUser)
     }
+    if (id === DISCOVER_FOLDER_ID && isDiscoverFolderVisible()) {
+      return buildDiscoverRootFolderItem(currentUser)
+    }
+    const discoverFolderSlugForId = idToDiscoverFolderSlug(id)
+    if (discoverFolderSlugForId) {
+      const def = DISCOVER_CATEGORIES.find(d => d.slug === discoverFolderSlugForId)!
+      return buildDiscoverCategoryFolderItem(def, discoverCategoryMembers(currentUser, def.slug).length)
+    }
+    const discoverCollectionSlugForId = idToDiscoverCollectionSlug(id)
+    if (discoverCollectionSlugForId) {
+      const def = DISCOVER_CATEGORIES.find(d => d.slug === discoverCollectionSlugForId)!
+      return buildDiscoverCategoryCollectionItem(def, discoverCategoryMembers(currentUser, def.slug).length)
+    }
 
     const folderSlug = idToTraktFolderSlug(id)
     if (folderSlug && isTraktEntryVisible(folderSlug)) {
@@ -3262,6 +3454,14 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     const isThumb = type.toLowerCase() === 'thumb'
     const kind = imageKindForType(type)
     const rootFolderUser = requestUser(headers) ?? fallbackUser()
+
+    const personTmdbId = idToPersonTmdb(id)
+    if (personTmdbId) {
+      const profilePath = getPersonProfilePath(personTmdbId)
+      if (!profilePath) return reply.code(404).send()
+      return sendImageUrl(reply, headers, profilePath, 'profile', query)
+    }
+
     if (id === MOVIES_FOLDER_ID || id === SHOWS_FOLDER_ID || id === COLLECTIONS_FOLDER_ID) {
       const representative = bestRootFolderImage(id, rootFolderUser)
       if (!representative) return reply.code(404).send()

@@ -187,6 +187,21 @@
       </div>
       <div class="field-note">Used for metadata, artwork, and Add to Library search.</div>
     </div>
+    <label class="check-item field" for="discoverEnabled">
+      <input id="discoverEnabled" type="checkbox" onchange="syncDiscoverPresentationVisibility()">
+      <div class="check-meta">
+        <div class="check-title">Discover</div>
+        <div class="check-slug">Browse TMDB trending, popular, top rated, and upcoming movies/shows as a synced folder. Disabled by default.</div>
+      </div>
+    </label>
+    <div class="field" id="discoverPresentationField" hidden>
+      <label for="discoverPresentationMode">Show as</label>
+      <select id="discoverPresentationMode">
+        <option value="folder">Folder — its own "Discover" folder in the library</option>
+        <option value="collection">Collection — grouped under Collections</option>
+        <option value="library">Library — merged directly into Movies/Shows</option>
+      </select>
+    </div>
   </section>
 
   <!-- TVDB -->
@@ -670,6 +685,11 @@
     renderUsers()
   }
 
+  function syncDiscoverPresentationVisibility() {
+    const enabled = document.getElementById('discoverEnabled').checked
+    document.getElementById('discoverPresentationField').hidden = !enabled
+  }
+
   function setSecretPlaceholder(id, hasStored, emptyPlaceholder) {
     const input = document.getElementById(id)
     input.value = ''
@@ -1035,6 +1055,9 @@
     document.getElementById('stremioSearchEnabled').checked = d.stremioSearchEnabled === true
     document.getElementById('stremioSearchSource').value = d.stremioSearchSource || 'cinemeta'
     syncStremioSearchSourceVisibility()
+    document.getElementById('discoverEnabled').checked = d.discoverEnabled === true
+    document.getElementById('discoverPresentationMode').value = d.discoverPresentationMode || 'folder'
+    syncDiscoverPresentationVisibility()
     document.getElementById('mediaSourceLimit').value = String([5, 10, 20].includes(d.mediaSourceLimit) ? d.mediaSourceLimit : 10)
     syncMediaSourceLimitVisibility()
     setSecretPlaceholder('rdApiKey', hasStoredRdApiKey, 'Enter your Real-Debrid API key')
@@ -1597,6 +1620,8 @@
       mediaSourceSelection: document.getElementById('mediaSourceSelection').checked,
       stremioSearchEnabled: document.getElementById('stremioSearchEnabled').checked,
       stremioSearchSource: document.getElementById('stremioSearchSource').value,
+      discoverEnabled: document.getElementById('discoverEnabled').checked,
+      discoverPresentationMode: document.getElementById('discoverPresentationMode').value,
       mediaSourceLimit: document.getElementById('mediaSourceLimit').value,
       serverUrl:         document.getElementById('serverUrl').value,
       showAddDefaultMode: document.getElementById('showAddDefaultMode').value,

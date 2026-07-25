@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import { parseTorrentTitle, type ParsedResult as ParsedTorrentTitleResult } from '@viren070/parse-torrent-title'
 import { randomBytes } from 'node:crypto'
-import { collectStreamProviderUrls, config, isListPresentationEnabled, normalizeListPresentation, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseTraktListModes, parseStremioSearchSource } from './config.js'
+import { collectStreamProviderUrls, config, isListPresentationEnabled, normalizeListPresentation, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseDiscoverPresentationMode, parseFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseMusicAddonUrls, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseTraktLists, parseTraktListModes, parseStremioSearchSource } from './config.js'
 import { getDb, getAllSettings } from './db.js'
 import { jellyfinRoutes, resolveJellyfinUser } from './jellyfin/index.js'
 import { uiRoutes } from './ui/routes.js'
@@ -9,6 +9,7 @@ import { wrapFastifyLogger } from './logger.js'
 import { markSyncComplete } from './sync-state.js'
 import { cleanupRemovedTraktListSources, syncTraktWatchlist, syncTraktShowsWatchlist, syncTraktList, syncTraktWatchedStatus, startDeviceAuth, tokenStatus } from './trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistEntries, syncMdblistList } from './mdblist.js'
+import { syncAllDiscoverCategories, removeAllDiscoverSourceItems } from './discover.js'
 import { fetchRankedStreams, fetchRankedEpisodeStreams, fetchRankedStremioStreams, extractHashFromStream, summarizeStreamForLog, type StremioMediaType, type Stream } from './sootio.js'
 import { resolveStream, probeAudioLanguages, NotCachedError, ProviderUnavailableError, type ResolvedStream } from './rd.js'
 import {
@@ -99,6 +100,8 @@ getDb()
   if (s.mdblistApiKey)        config.mdblistApiKey       = s.mdblistApiKey
   if (s.mdblistLists != null) config.mdblistLists = normalizeMdblistEntries(parseMdblistLists(s.mdblistLists))
   if (s.mdblistFolders != null) config.mdblistFolders = parseFoldersSetting(s.mdblistFolders, false)
+  if (s.discoverEnabled != null) config.discoverEnabled = parseBooleanSetting(s.discoverEnabled, false)
+  if (s.discoverPresentationMode != null) config.discoverPresentationMode = parseDiscoverPresentationMode(s.discoverPresentationMode)
   if (s.showAddDefaultMode != null) config.showAddDefaultMode = parseShowAddDefaultMode(s.showAddDefaultMode)
   if (s.movieReleaseMode != null) config.movieReleaseMode = parseMovieReleaseMode(s.movieReleaseMode)
   if (s.musicAddonUrls != null) config.musicAddonUrls = parseMusicAddonUrls(s.musicAddonUrls)
@@ -1958,6 +1961,12 @@ async function runSyncInternal() {
       `sync: removed stale MDBList sources — ${staleMdblistCleanup.removedSourceKeys.join(', ')}; ` +
       `${staleMdblistCleanup.prunedMovies} movies pruned, ${staleMdblistCleanup.prunedShows} shows pruned`
     )
+  }
+
+  if (config.discoverEnabled) {
+    await syncAllDiscoverCategories().catch(err => app.log.error(`Discover sync failed: ${err}`))
+  } else {
+    removeAllDiscoverSourceItems()
   }
 
   // Refresh metadata (e.g. backdrop_path) for movies missing it

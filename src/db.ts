@@ -20,6 +20,7 @@ export interface Movie {
   communityRating:    number
   studiosJson:        string
   tagsJson:           string
+  castJson:           string   // JSON CreditPerson[] — cast + director/writer credits
   releaseDate:        string   // theatrical release date (YYYY-MM-DD)
   digitalReleaseDate: string   // digital/streaming release date (YYYY-MM-DD)
   syncedAt:           string
@@ -45,6 +46,7 @@ export interface Show {
   communityRating: number
   studiosJson:     string
   tagsJson:        string
+  castJson:        string   // JSON CreditPerson[] — cast + creator/writer credits
   syncedAt:     string
 }
 
@@ -282,6 +284,13 @@ CREATE TABLE IF NOT EXISTS episodes (
 CREATE INDEX IF NOT EXISTS episodes_show   ON episodes(show_tmdb_id);
 CREATE INDEX IF NOT EXISTS episodes_season ON episodes(show_tmdb_id, season_number);
 
+CREATE TABLE IF NOT EXISTS people (
+  tmdb_person_id INTEGER PRIMARY KEY,
+  name           TEXT    NOT NULL DEFAULT '',
+  profile_path   TEXT    NOT NULL DEFAULT '',
+  synced_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
@@ -481,6 +490,8 @@ export function getDb(): Database.Database {
     try { _db.exec(`ALTER TABLE movies ADD COLUMN digital_release_date TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE movies ADD COLUMN media_language TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE shows ADD COLUMN media_language TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE movies ADD COLUMN cast_json TEXT NOT NULL DEFAULT '[]'`) } catch { /* already exists */ }
+    try { _db.exec(`ALTER TABLE shows ADD COLUMN cast_json TEXT NOT NULL DEFAULT '[]'`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE user_item_data ADD COLUMN watch_state_source TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE user_item_data ADD COLUMN watch_state_updated_at TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
     try { _db.exec(`ALTER TABLE user_item_data ADD COLUMN trakt_last_watched_at TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
@@ -700,6 +711,7 @@ function row2movie(r: Record<string, unknown>): Movie {
     communityRating:     (r.community_rating    as number) ?? 0,
     studiosJson:         (r.studios_json        as string) ?? '[]',
     tagsJson:            (r.tags_json           as string) ?? '[]',
+    castJson:            (r.cast_json           as string) ?? '[]',
     releaseDate:         (r.release_date         as string) ?? '',
     digitalReleaseDate:  (r.digital_release_date as string) ?? '',
     syncedAt:            r.synced_at             as string,
@@ -708,8 +720,8 @@ function row2movie(r: Record<string, unknown>): Movie {
 
 export function upsertMovie(m: Omit<Movie, 'id'>): void {
   getDb().prepare(`
-    INSERT INTO movies (tmdb_id, imdb_id, media_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, runtime_mins, popularity, official_rating, community_rating, studios_json, tags_json, release_date, digital_release_date, synced_at)
-    VALUES (@tmdbId, @imdbId, @mediaLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @runtimeMins, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, @releaseDate, @digitalReleaseDate, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+    INSERT INTO movies (tmdb_id, imdb_id, media_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, runtime_mins, popularity, official_rating, community_rating, studios_json, tags_json, cast_json, release_date, digital_release_date, synced_at)
+    VALUES (@tmdbId, @imdbId, @mediaLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @runtimeMins, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, @castJson, @releaseDate, @digitalReleaseDate, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
     ON CONFLICT(tmdb_id) DO UPDATE SET
       imdb_id              = excluded.imdb_id,
       media_language       = excluded.media_language,
@@ -726,6 +738,7 @@ export function upsertMovie(m: Omit<Movie, 'id'>): void {
       community_rating     = excluded.community_rating,
       studios_json         = excluded.studios_json,
       tags_json            = excluded.tags_json,
+      cast_json            = excluded.cast_json,
       release_date         = excluded.release_date,
       digital_release_date = excluded.digital_release_date
   `).run(m)
@@ -1110,14 +1123,15 @@ function row2show(r: Record<string, unknown>): Show {
     communityRating: (r.community_rating as number) ?? 0,
     studiosJson:     (r.studios_json as string) ?? '[]',
     tagsJson:        (r.tags_json as string) ?? '[]',
+    castJson:        (r.cast_json as string) ?? '[]',
     syncedAt:     r.synced_at     as string,
   }
 }
 
 export function upsertShow(s: Omit<Show, 'id'>): void {
   getDb().prepare(`
-    INSERT INTO shows (tmdb_id, imdb_id, tvdb_id, media_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, status, num_seasons, popularity, official_rating, community_rating, studios_json, tags_json, synced_at)
-    VALUES (@tmdbId, @imdbId, @tvdbId, @mediaLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @status, @numSeasons, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
+    INSERT INTO shows (tmdb_id, imdb_id, tvdb_id, media_language, title, year, overview, poster_path, backdrop_path, logo_path, genres, status, num_seasons, popularity, official_rating, community_rating, studios_json, tags_json, cast_json, synced_at)
+    VALUES (@tmdbId, @imdbId, @tvdbId, @mediaLanguage, @title, @year, @overview, @posterPath, @backdropPath, @logoPath, @genres, @status, @numSeasons, @popularity, @officialRating, @communityRating, @studiosJson, @tagsJson, @castJson, COALESCE(NULLIF(@syncedAt, ''), strftime('%Y-%m-%dT%H:%M:%SZ','now')))
     ON CONFLICT(tmdb_id) DO UPDATE SET
       imdb_id      = excluded.imdb_id,
       tvdb_id      = excluded.tvdb_id,
@@ -1135,7 +1149,8 @@ export function upsertShow(s: Omit<Show, 'id'>): void {
       official_rating = excluded.official_rating,
       community_rating = excluded.community_rating,
       studios_json = excluded.studios_json,
-      tags_json = excluded.tags_json
+      tags_json = excluded.tags_json,
+      cast_json = excluded.cast_json
   `).run(s)
 }
 
@@ -1250,6 +1265,27 @@ export function upsertEpisode(e: Omit<Episode, 'id'>): void {
       air_date     = excluded.air_date,
       synced_at    = excluded.synced_at
   `).run(e)
+}
+
+export function upsertPeople(people: Array<{ tmdbId: number; name: string; profilePath: string }>): void {
+  if (!people.length) return
+  const stmt = getDb().prepare(`
+    INSERT INTO people (tmdb_person_id, name, profile_path, synced_at)
+    VALUES (@tmdbId, @name, @profilePath, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    ON CONFLICT(tmdb_person_id) DO UPDATE SET
+      name         = excluded.name,
+      profile_path = excluded.profile_path,
+      synced_at    = excluded.synced_at
+  `)
+  const insertMany = getDb().transaction((rows: typeof people) => {
+    for (const row of rows) stmt.run(row)
+  })
+  insertMany(people)
+}
+
+export function getPersonProfilePath(tmdbId: number): string {
+  const row = getDb().prepare(`SELECT profile_path FROM people WHERE tmdb_person_id = ?`).get(tmdbId) as { profile_path: string } | undefined
+  return row?.profile_path ?? ''
 }
 
 export function getEpisodesForSeason(showTmdbId: number, seasonNumber: number): Episode[] {

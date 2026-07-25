@@ -4,6 +4,7 @@ import {
   upsertShow, getShowByTmdbId, getShowByImdbId, type Show,
   upsertSeason, getSeasonsForShow, type Season,
   upsertEpisode, type Episode, getAiredEpisodesForSeason, getEffectiveShowMode,
+  upsertPeople,
 } from './db.js'
 import { fetchContentRatingFallback, fetchEpisodeStillFallbacks, fetchSeriesLanguage } from './tvdb.js'
 
@@ -57,7 +58,7 @@ function latestSeasonNumber(seasons: Season[]): number {
 
 async function refreshShowMetadata(show: Show): Promise<Show> {
   try {
-    const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords,credits&include_image_language=en,null`) as
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? show.imdbId
     const tvdbId = r.external_ids?.tvdb_id ?? show.tvdbId
@@ -94,6 +95,60 @@ interface TmdbMovieRaw {
     id: number
     name: string
   } | null
+  credits?: TmdbCreditsResponse
+}
+
+interface TmdbCastMember {
+  id: number
+  name: string
+  character?: string
+  profile_path?: string | null
+  order?: number
+}
+
+interface TmdbCrewMember {
+  id: number
+  name: string
+  job?: string
+  department?: string
+  profile_path?: string | null
+}
+
+interface TmdbCreditsResponse {
+  cast?: TmdbCastMember[]
+  crew?: TmdbCrewMember[]
+}
+
+export interface CreditPerson {
+  id: number
+  name: string
+  role: string
+  type: 'Actor' | 'Director' | 'Writer' | 'Producer'
+  profilePath: string
+}
+
+const CREW_ROLE_TYPE: Record<string, CreditPerson['type']> = {
+  Director: 'Director',
+  Writer: 'Writer',
+  Screenplay: 'Writer',
+  Creator: 'Writer',
+  'Executive Producer': 'Producer',
+  Producer: 'Producer',
+}
+
+function pickCredits(credits?: TmdbCreditsResponse, createdBy?: Array<{ id: number; name: string; profile_path?: string | null }>): string {
+  const cast: CreditPerson[] = (credits?.cast ?? [])
+    .slice(0, 15)
+    .map(c => ({ id: c.id, name: c.name, role: c.character ?? '', type: 'Actor', profilePath: c.profile_path ?? '' }))
+  const crew: CreditPerson[] = (credits?.crew ?? [])
+    .filter(c => c.job != null && CREW_ROLE_TYPE[c.job] != null)
+    .slice(0, 8)
+    .map(c => ({ id: c.id, name: c.name, role: c.job!, type: CREW_ROLE_TYPE[c.job!], profilePath: c.profile_path ?? '' }))
+  const creators: CreditPerson[] = (createdBy ?? [])
+    .map(c => ({ id: c.id, name: c.name, role: 'Creator', type: 'Writer' as const, profilePath: c.profile_path ?? '' }))
+  const merged = [...cast, ...crew, ...creators]
+  upsertPeople(merged.filter(p => p.profilePath).map(p => ({ tmdbId: p.id, name: p.name, profilePath: p.profilePath })))
+  return JSON.stringify(merged)
 }
 
 interface TmdbCollectionPartRaw {
@@ -216,6 +271,7 @@ function raw2movie(r: TmdbMovieRaw, imdbId = '', listedAt = ''): Omit<Movie, 'id
     communityRating:    r.vote_average ?? 0,
     studiosJson:        JSON.stringify((r.production_companies ?? []).map(s => ({ id: s.id, name: s.name }))),
     tagsJson:           JSON.stringify((((r as TmdbMovieRaw & { keywords?: TmdbKeywordsResponse }).keywords?.keywords) ?? []).map(k => k.name)),
+    castJson:           pickCredits(r.credits),
     releaseDate:        r.release_date ?? '',
     digitalReleaseDate: extractDigitalReleaseDate(r),
     syncedAt:           listedAt,
@@ -229,9 +285,9 @@ function raw2movie(r: TmdbMovieRaw, imdbId = '', listedAt = ''): Omit<Movie, 'id
 export async function refreshMovieMetadataIfNeeded(movie: Movie): Promise<void> {
   if (!config.tmdbApiKey) return
   // Refresh if missing backdrop or release date info
-  if (movie.backdropPath && movie.logoPath && movie.releaseDate && movie.officialRating && movie.communityRating && movie.studiosJson !== '[]') return
+  if (movie.backdropPath && movie.logoPath && movie.releaseDate && movie.officialRating && movie.communityRating && movie.studiosJson !== '[]' && movie.castJson !== '[]') return
   try {
-    const r = await tmdbGet(`/movie/${movie.tmdbId}?append_to_response=external_ids,release_dates,images,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/movie/${movie.tmdbId}?append_to_response=external_ids,release_dates,images,keywords,credits&include_image_language=en,null`) as
       TmdbMovieRaw & { external_ids?: { imdb_id?: string }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? movie.imdbId
     upsertMovie(raw2movie(r, imdbId))
@@ -244,10 +300,10 @@ export async function fetchMovieByTmdbId(tmdbId: number, listedAt = ''): Promise
   if (!config.tmdbApiKey) return null
   // Check cache first
   const cached = getMovieByTmdbId(tmdbId)
-  if (cached?.imdbId) return cached
+  if (cached?.imdbId && cached.castJson !== '[]') return cached
 
   try {
-    const r = await tmdbGet(`/movie/${tmdbId}?append_to_response=external_ids,release_dates,images,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/movie/${tmdbId}?append_to_response=external_ids,release_dates,images,keywords,credits&include_image_language=en,null`) as
       TmdbMovieRaw & { external_ids?: { imdb_id?: string }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? ''
     const m = raw2movie(r, imdbId, listedAt)
@@ -306,6 +362,46 @@ export async function fetchMovieCollection(movieTmdbId: number): Promise<MovieCo
   }
 }
 
+async function fetchTmdbIdList(path: string, pages = 2): Promise<number[]> {
+  const ids: number[] = []
+  for (let page = 1; page <= pages; page++) {
+    try {
+      const sep = path.includes('?') ? '&' : '?'
+      const r = await tmdbGet(`${path}${sep}page=${page}`) as { results?: { id: number }[]; total_pages?: number }
+      ids.push(...(r.results ?? []).map(item => item.id))
+      if (r.total_pages != null && page >= r.total_pages) break
+    } catch {
+      break
+    }
+  }
+  return ids
+}
+
+export function fetchTrendingMovies(): Promise<number[]> {
+  return config.tmdbApiKey ? fetchTmdbIdList('/trending/movie/week') : Promise.resolve([])
+}
+export function fetchTrendingShows(): Promise<number[]> {
+  return config.tmdbApiKey ? fetchTmdbIdList('/trending/tv/week') : Promise.resolve([])
+}
+export function fetchPopularMovies(): Promise<number[]> {
+  return config.tmdbApiKey ? fetchTmdbIdList('/movie/popular') : Promise.resolve([])
+}
+export function fetchPopularShows(): Promise<number[]> {
+  return config.tmdbApiKey ? fetchTmdbIdList('/tv/popular') : Promise.resolve([])
+}
+export function fetchTopRatedMovies(): Promise<number[]> {
+  return config.tmdbApiKey ? fetchTmdbIdList('/movie/top_rated') : Promise.resolve([])
+}
+export function fetchTopRatedShows(): Promise<number[]> {
+  return config.tmdbApiKey ? fetchTmdbIdList('/tv/top_rated') : Promise.resolve([])
+}
+export function fetchUpcomingMovies(): Promise<number[]> {
+  return config.tmdbApiKey ? fetchTmdbIdList('/movie/upcoming') : Promise.resolve([])
+}
+export function fetchOnTheAirShows(): Promise<number[]> {
+  return config.tmdbApiKey ? fetchTmdbIdList('/tv/on_the_air') : Promise.resolve([])
+}
+
 export async function fetchMovieRecommendations(tmdbId: number, limit = 20): Promise<number[]> {
   if (!config.tmdbApiKey) return []
   try {
@@ -336,13 +432,15 @@ export async function fetchShowRecommendations(tmdbId: number, limit = 20): Prom
   }
 }
 
-type TmdbImageKind = 'poster' | 'backdrop' | 'logo'
+type TmdbImageKind = 'poster' | 'backdrop' | 'logo' | 'profile'
 
 function pickTmdbImageSize(kind: TmdbImageKind, requestedWidth?: number | null): string {
   const widths = kind === 'backdrop'
     ? [300, 780, 1280]
+    : kind === 'profile'
+    ? [45, 185]
     : [92, 154, 185, 342, 500, 780]
-  const fallback = kind === 'backdrop' ? 1280 : 500
+  const fallback = kind === 'backdrop' ? 1280 : kind === 'profile' ? 185 : 500
   const target = requestedWidth && requestedWidth > 0 ? requestedWidth : fallback
   const chosen = widths.find(width => width >= target) ?? widths[widths.length - 1]
   return `w${chosen}`
@@ -377,6 +475,8 @@ interface TmdbShowRaw {
   networks?: Array<{ id: number; name: string }>
   external_ids?:    { imdb_id?: string; tvdb_id?: number }
   content_ratings?: { results?: Array<{ iso_3166_1: string; rating: string }> }
+  credits?:         TmdbCreditsResponse
+  created_by?:      Array<{ id: number; name: string; profile_path?: string | null }>
 }
 
 interface TmdbSeasonRaw {
@@ -418,6 +518,7 @@ function raw2show(r: TmdbShowRaw, imdbId = '', tvdbId = 0, listedAt = ''): Omit<
     communityRating: r.vote_average ?? 0,
     studiosJson: JSON.stringify((r.production_companies ?? r.networks ?? []).map(s => ({ id: s.id, name: s.name }))),
     tagsJson: JSON.stringify((((r as TmdbShowRaw & { keywords?: TmdbKeywordsResponse }).keywords?.results) ?? []).map(k => k.name)),
+    castJson: pickCredits(r.credits, r.created_by),
     syncedAt:     listedAt,
   }
 }
@@ -425,10 +526,10 @@ function raw2show(r: TmdbShowRaw, imdbId = '', tvdbId = 0, listedAt = ''): Omit<
 export async function fetchShowByTmdbId(tmdbId: number, listedAt = ''): Promise<Show | null> {
   if (!config.tmdbApiKey) return null
   const cached = getShowByTmdbId(tmdbId)
-  if (cached?.imdbId && (!config.tvdbApiKey || cached.tvdbId)) return cached
+  if (cached?.imdbId && (!config.tvdbApiKey || cached.tvdbId) && cached.castJson !== '[]') return cached
 
   try {
-    const r = await tmdbGet(`/tv/${tmdbId}?append_to_response=external_ids,images,content_ratings,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/tv/${tmdbId}?append_to_response=external_ids,images,content_ratings,keywords,credits&include_image_language=en,null`) as
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? ''
     const tvdbId = r.external_ids?.tvdb_id ?? 0
@@ -561,9 +662,9 @@ export async function fetchAndCacheSeasonDetails(
  * Only hits TMDB if the show is missing a backdrop.
  */
 export async function refreshShowMetadataIfNeeded(show: Show): Promise<void> {
-  if ((show.backdropPath && show.logoPath && show.officialRating && show.communityRating && show.studiosJson !== '[]' && (!config.tvdbApiKey || show.tvdbId)) || !config.tmdbApiKey) return
+  if ((show.backdropPath && show.logoPath && show.officialRating && show.communityRating && show.studiosJson !== '[]' && show.castJson !== '[]' && (!config.tvdbApiKey || show.tvdbId)) || !config.tmdbApiKey) return
   try {
-    const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords&include_image_language=en,null`) as
+    const r = await tmdbGet(`/tv/${show.tmdbId}?append_to_response=external_ids,images,content_ratings,keywords,credits&include_image_language=en,null`) as
       TmdbShowRaw & { external_ids?: { imdb_id?: string; tvdb_id?: number }; images?: TmdbImagesResponse; keywords?: TmdbKeywordsResponse }
     const imdbId = r.external_ids?.imdb_id ?? show.imdbId
     const tvdbId = r.external_ids?.tvdb_id ?? show.tvdbId

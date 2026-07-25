@@ -22,10 +22,11 @@ import {
   getSessionCookie, clearSessionCookie, getTokenFromCookie,
 } from './auth.js'
 import { config } from '../config.js'
-import { collectStreamProviderUrls, normalizeListPresentation, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseFoldersSetting, serializeFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseStremioSearchSource, parseTraktLists, type ListPresentation } from '../config.js'
+import { collectStreamProviderUrls, normalizeListPresentation, normalizeSootioUrl, parseAudioLanguage, parseBooleanSetting, parseDiscoverPresentationMode, parseFoldersSetting, serializeFoldersSetting, parseEnglishStreamMode, parseMdblistLists, parseMediaSourceLimit, parseMovieReleaseMode, parseShowAddDefaultMode, parseStreamProviderUrls, parseStreamRankingMode, parseStremioSearchSource, parseTraktLists, type ListPresentation } from '../config.js'
 import { fetchMovieByTmdbId, fetchMovieCollection, fetchShowByTmdbId, ensureShowSeasonsCached } from '../tmdb.js'
 import { cleanupRemovedTraktListSources, fetchTraktUserLists } from '../trakt.js'
 import { cleanupRemovedMdblistListSources, normalizeMdblistEntries } from '../mdblist.js'
+import { syncAllDiscoverCategories, removeAllDiscoverSourceItems } from '../discover.js'
 import { getProviderFetchMetrics } from '../sootio.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -756,6 +757,8 @@ export async function uiRoutes(app: FastifyInstance) {
       traktWatchHistory: config.traktWatchHistory,
       traktCollections: config.traktCollections,
       traktFolders: config.traktFolders,
+      discoverEnabled: config.discoverEnabled,
+      discoverPresentationMode: config.discoverPresentationMode,
       traktListModes: config.traktListModes,
       mdblistFolders: config.mdblistFolders,
       mdblistLists: config.mdblistLists,
@@ -926,6 +929,21 @@ export async function uiRoutes(app: FastifyInstance) {
       const enabled = parseBooleanSetting(String(body.traktCollections), false)
       setSetting('traktCollections', enabled ? 'true' : 'false')
       config.traktCollections = enabled
+    }
+    if (body.discoverEnabled != null) {
+      const enabled = parseBooleanSetting(String(body.discoverEnabled), false)
+      setSetting('discoverEnabled', enabled ? 'true' : 'false')
+      config.discoverEnabled = enabled
+      if (enabled) {
+        syncAllDiscoverCategories().catch(err => app.log.error(`Discover sync failed: ${err}`))
+      } else {
+        removeAllDiscoverSourceItems()
+      }
+    }
+    if (typeof body.discoverPresentationMode === 'string') {
+      const mode = parseDiscoverPresentationMode(body.discoverPresentationMode)
+      setSetting('discoverPresentationMode', mode)
+      config.discoverPresentationMode = mode
     }
     if (body.traktFolders != null) {
       const setting = Array.isArray(body.traktFolders)
