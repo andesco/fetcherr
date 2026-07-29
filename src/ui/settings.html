@@ -1050,7 +1050,7 @@
     if (legacyAddonUrl) streamProviderUrls = uniqueProviderUrls([legacyAddonUrl, ...streamProviderUrls])
     document.getElementById('preferredAudioLanguage').value = d.preferredAudioLanguage || 'en'
     document.getElementById('englishStreamMode').value = d.englishStreamMode || 'prefer'
-    document.getElementById('streamRankingMode').value = d.streamRankingMode || 'fetcherr'
+    document.getElementById('streamRankingMode').value = d.streamRankingMode || 'provider'
     document.getElementById('mediaSourceSelection').checked = d.mediaSourceSelection === true
     document.getElementById('stremioSearchEnabled').checked = d.stremioSearchEnabled === true
     document.getElementById('stremioSearchSource').value = d.stremioSearchSource || 'cinemeta'

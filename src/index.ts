@@ -1642,7 +1642,7 @@ async function resolveMoviePlayback(imdbId: string, playbackClient = ''): Promis
 
   if (hasStreamProvider) {
     try {
-      const streams = await fetchRankedStreams(imdbId, config.preferredAudioLanguage, '', playbackClient, true)
+      const streams = await fetchRankedStreams(imdbId, config.preferredAudioLanguage, '', playbackClient, config.streamRankingMode === 'provider')
       return await resolvePlayableStream(streams, imdbId, playPath, undefined, true)
     } catch (err) {
       if (!hasUsenet) throw err
@@ -1666,7 +1666,7 @@ async function resolveMoviePlayback(imdbId: string, playbackClient = ''): Promis
 
 async function resolveStremioPlayback(mediaType: StremioMediaType, externalId: string, playbackClient = ''): Promise<PlayResolution> {
   const playPath = `/play/stremio/${mediaType}/${encodeURIComponent(externalId)}`
-  const streams = await fetchRankedStremioStreams(mediaType, externalId, undefined, config.preferredAudioLanguage, '', playbackClient, true)
+  const streams = await fetchRankedStremioStreams(mediaType, externalId, undefined, config.preferredAudioLanguage, '', playbackClient, config.streamRankingMode === 'provider')
   return resolvePlayableStream(streams, `${mediaType} ${externalId}`, playPath, undefined, true)
 }
 
@@ -1700,7 +1700,7 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
         config.preferredAudioLanguage,
         '',
         playbackClient,
-        true,
+        config.streamRankingMode === 'provider',
       )
       return await resolvePlayableStream(
         streams,

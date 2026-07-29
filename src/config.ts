@@ -220,7 +220,7 @@ export function parseStremioSearchSource(value: string | undefined): StremioSear
 export type MediaSourceLimit = 5 | 10 | 20
 
 export function parseStreamRankingMode(value: string | undefined): StreamRankingMode {
-  return value === 'provider' ? 'provider' : 'fetcherr'
+  return value === 'fetcherr' ? 'fetcherr' : 'provider'
 }
 
 export function parseMediaSourceLimit(value: string | undefined): MediaSourceLimit {
