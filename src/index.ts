@@ -463,8 +463,13 @@ function streamEligibleForMediaSourceSelection(stream: Stream): boolean {
   // Hash-less direct URLs (usenet addons, or anything else that hands back a ready-to-play
   // link instead of a torrent) carry none of the RD/TorBox cache-marker text above, but
   // resolvePlayableStream already trusts them immediately at play time (no uncached-download
-  // wait) — so they're just as safe to list as alternate versions here.
-  return !extractHashFromStream(stream) && isDirectPlaybackUrl(stream.url)
+  // wait) — so they're just as safe to list as alternate versions here. Require a filename
+  // hint too: some addons (streamnzb) also return non-video control actions — e.g. a "try
+  // next release" retry link — as hash-less direct URLs, and those never carry a filename.
+  return !extractHashFromStream(stream)
+    && isDirectPlaybackUrl(stream.url)
+    && typeof stream.behaviorHints?.filename === 'string'
+    && stream.behaviorHints.filename.length > 0
 }
 
 function streamMarkedNotWebReady(stream: { behaviorHints?: Record<string, unknown> }): boolean {
