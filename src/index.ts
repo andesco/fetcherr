@@ -1456,6 +1456,29 @@ function streamBitrate(sizeBytes: number | undefined, runtimeTicks: number): num
   return Math.round((sizeBytes * 8) / seconds)
 }
 
+// parse-torrent-title's 2-letter/BCP-47-ish language codes, mapped to the ISO 639-2/B
+// codes Jellyfin clients expect on MediaStreams[].Language.
+const LANGUAGE_ISO3: Record<string, string> = {
+  ar: 'ara', bg: 'bul', bn: 'ben', cs: 'cze', da: 'dan', de: 'ger', el: 'gre',
+  en: 'eng', es: 'spa', et: 'est', fa: 'per', fi: 'fin', fr: 'fre', gu: 'guj',
+  he: 'heb', hi: 'hin', hr: 'hrv', hu: 'hun', id: 'ind', it: 'ita', ja: 'jpn',
+  kn: 'kan', ko: 'kor', lt: 'lit', lv: 'lav', ml: 'mal', mr: 'mar', ms: 'may',
+  nl: 'dut', no: 'nor', pa: 'pan', pl: 'pol', pt: 'por', ro: 'rum', ru: 'rus',
+  sk: 'slo', sl: 'slv', sr: 'srp', sv: 'swe', ta: 'tam', te: 'tel', th: 'tha',
+  tr: 'tur', uk: 'ukr', vi: 'vie', zh: 'chi', 'zh-tw': 'chi',
+}
+
+// The parser's 'languages' field also carries non-language markers ('multi audio',
+// 'dual audio', 'multi subs', 'mono', 'stereo') — those simply aren't keys in the
+// map above, so the .find() below skips them and falls through to the next entry.
+function detectStreamAudioLanguage(stream?: Stream): string {
+  if (!stream) return 'eng'
+  const text = rawStreamMetadataText(stream)
+  const parsed = parseStreamMetadata(stream, text)
+  const code = (parsed.languages ?? []).find(lang => lang in LANGUAGE_ISO3)
+  return code ? LANGUAGE_ISO3[code] : 'eng'
+}
+
 function playbackMediaSource(id: string, name: string, path: string, runtimeTicks: number, stream?: Stream) {
   const size = stream ? streamSizeBytes(stream) : undefined
   const bitrate = streamBitrate(size, runtimeTicks)
@@ -1492,7 +1515,7 @@ function playbackMediaSource(id: string, name: string, path: string, runtimeTick
         RealFrameRate: 23.976,
         AverageFrameRate: 23.976,
       },
-      { Type: 'Audio', Index: 1, Codec: 'aac', IsDefault: true, Language: 'eng' },
+      { Type: 'Audio', Index: 1, Codec: 'aac', IsDefault: true, Language: detectStreamAudioLanguage(stream) },
     ],
   }
 }
