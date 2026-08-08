@@ -457,9 +457,14 @@ function streamClearlyDirectDebrid(stream: { name?: string; title?: string; desc
   return streamClearlyRealDebridCached(stream) || streamClearlyTorBoxCached(stream)
 }
 
-function streamEligibleForMediaSourceSelection(stream: { name?: string; title?: string; description?: string; behaviorHints?: Record<string, unknown> }): boolean {
+function streamEligibleForMediaSourceSelection(stream: Stream): boolean {
   const text = streamMetadataText(stream)
-  return streamClearlyDirectDebrid(stream) || /\bcached\b|\binstant\b|⚡/.test(text)
+  if (streamClearlyDirectDebrid(stream) || /\bcached\b|\binstant\b|⚡/.test(text)) return true
+  // Hash-less direct URLs (usenet addons, or anything else that hands back a ready-to-play
+  // link instead of a torrent) carry none of the RD/TorBox cache-marker text above, but
+  // resolvePlayableStream already trusts them immediately at play time (no uncached-download
+  // wait) — so they're just as safe to list as alternate versions here.
+  return !extractHashFromStream(stream) && isDirectPlaybackUrl(stream.url)
 }
 
 function streamMarkedNotWebReady(stream: { behaviorHints?: Record<string, unknown> }): boolean {
