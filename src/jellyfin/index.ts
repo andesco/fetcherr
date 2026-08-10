@@ -25,6 +25,7 @@ import { buildPlaybackOrigin, createSignedPlaybackUrl } from '../play-auth.js'
 import { mdblistListPathFromUrl } from '../mdblist.js'
 import { fetchStremioMeta, searchStremioMetas, type StremioMediaType, type StremioMeta } from '../sootio.js'
 import { searchTraktMetas } from '../trakt.js'
+import { PLAYBACK_PROFILES, playbackProfileForKey, type PlaybackProfile } from '../playback-profiles.js'
 
 // ── ID helpers ────────────────────────────────────────────────────────────────
 // Real Jellyfin uses GUIDs for all IDs. Infuse validates this client-side.
@@ -48,6 +49,7 @@ const SHOWS_FOLDER_ID  = 'a0000000-0000-4000-8000-000000000002'
 const COLLECTIONS_FOLDER_ID = 'a0000000-0000-4000-8007-000000000001'
 const SEARCH_DISABLED_ITEM_ID = 'a0000000-0000-4000-800a-000000000001'
 const SEARCH_DISABLED_RUNTIME_TICKS = 60 * 10_000_000
+const MEDIA_SOURCE_ITEM_ETAG_VERSION = 'media-sources-discovery-v3'
 const SERVER_GUID      = 'a0000000-0000-0000-0000-000000000001'
 const SEARCH_SERVER_GUID = 'a0000000-0000-0000-0000-00000000f001'
 const DISCOVER_FOLDER_ID = 'a0000000-0000-4000-8000-000000000003'
@@ -1294,6 +1296,80 @@ function userDataForItem(itemId: string, ud: { played: boolean; playCount: numbe
   }
 }
 
+function movieItemEtag(movie: Movie): string {
+  return createHash('md5').update([
+    MEDIA_SOURCE_ITEM_ETAG_VERSION,
+    movie.tmdbId,
+    movie.syncedAt,
+    config.mediaSourceSelection ? 'versions-enabled' : 'versions-disabled',
+    config.mediaSourceLimit,
+  ].join(':')).digest('hex')
+}
+
+function virtualProfileMediaSourceId(itemId: string, profile: PlaybackProfile): string {
+  return `${itemId}:profile:${profile.key}`
+}
+
+function virtualProfilePath(itemId: string, mediaSourceId: string): string {
+  const params = new URLSearchParams({
+    PlaySessionId: `fetcherr-${itemId}`,
+    MediaSourceId: mediaSourceId,
+  })
+  return `/Videos/${encodeURIComponent(itemId)}/stream?${params.toString()}`
+}
+
+function virtualProfileDimensions(profile: PlaybackProfile): { width: number; height: number } {
+  switch (profile.targetHeight) {
+    case 2160: return { width: 3840, height: 2160 }
+    case 1080: return { width: 1920, height: 1080 }
+    case 720: return { width: 1280, height: 720 }
+    case 360: return { width: 640, height: 360 }
+    default: return { width: 1920, height: 1080 }
+  }
+}
+
+function virtualProfileMediaSources(movie: Movie, itemId: string, runtimeTicks: number) {
+  if (!config.mediaSourceSelection || !movie.imdbId) return []
+  if (!config.sootioUrl && config.streamProviderUrls.length === 0) return []
+
+  return PLAYBACK_PROFILES.map(profile => {
+    const mediaSourceId = virtualProfileMediaSourceId(itemId, profile)
+    const { width, height } = virtualProfileDimensions(profile)
+    const bitrate = profile.targetBitrateMbps
+      ? profile.targetBitrateMbps * 1_000_000
+      : undefined
+    return {
+      Id: mediaSourceId,
+      Name: profile.name,
+      Type: 'Default',
+      Protocol: 'Http',
+      Path: virtualProfilePath(itemId, mediaSourceId),
+      IsRemote: true,
+      SupportsDirectPlay: true,
+      SupportsDirectStream: true,
+      SupportsTranscoding: false,
+      RequiresOpening: false,
+      RequiresClosing: false,
+      Container: 'mkv',
+      Bitrate: bitrate,
+      VideoType: 'VideoFile',
+      RunTimeTicks: runtimeTicks,
+      DefaultAudioStreamIndex: 1,
+      MediaStreams: [
+        {
+          Type: 'Video',
+          Index: 0,
+          Codec: 'h264',
+          IsDefault: true,
+          Width: width,
+          Height: height,
+          BitRate: bitrate,
+        },
+        { Type: 'Audio', Index: 1, Codec: 'aac', IsDefault: true, Language: 'eng' },
+      ],
+    }
+  })
+}
 function movieToItem(m: Movie, userId = DEFAULT_ADMIN_USER_ID) {
   const genres: string[] = JSON.parse(m.genres || '[]')
   const runtimeTicks = (m.runtimeMins || 90) * 60 * 10_000_000
@@ -1303,6 +1379,7 @@ function movieToItem(m: Movie, userId = DEFAULT_ADMIN_USER_ID) {
   const posterTag = m.posterPath ? m.posterPath.replace(/\W/g, '').slice(0, 16) : undefined
   const thumbTag = (m.backdropPath || m.posterPath) ? (m.backdropPath || m.posterPath).replace(/\W/g, '').slice(0, 16) : undefined
   const logoTag = m.logoPath ? m.logoPath.replace(/\W/g, '').slice(0, 16) : undefined
+  const virtualMediaSources = virtualProfileMediaSources(m, id, runtimeTicks)
   return {
     Id:                 id,
     ServerId:           SERVER_GUID,
@@ -1328,10 +1405,16 @@ function movieToItem(m: Movie, userId = DEFAULT_ADMIN_USER_ID) {
     ExternalUrls:       externalUrls('movie', m.imdbId, m.tmdbId),
     PremiereDate:       jellyfinPremiereDate(m.releaseDate || m.digitalReleaseDate),
     DateCreated:        m.syncedAt,
+    Etag:               movieItemEtag(m),
     RunTimeTicks:       runtimeTicks,
     IsFolder:           false,
     Path:               fakePath,
     EnableMediaSourceDisplay: true,
+    ...(virtualMediaSources.length ? {
+      MediaSources: virtualMediaSources,
+      AlternateMediaSources: virtualMediaSources,
+      MediaSourceCount: virtualMediaSources.length,
+    } : {}),
     ImageTags:          {
       ...(posterTag ? { Primary: posterTag } : {}),
       ...(logoTag ? { Logo: logoTag } : {}),
@@ -1687,6 +1770,7 @@ function movieToSearchItem(m: Movie) {
     ExternalUrls:       externalUrls('movie', m.imdbId, m.tmdbId),
     PremiereDate:       jellyfinPremiereDate(m.releaseDate || m.digitalReleaseDate),
     DateCreated:        m.syncedAt,
+    Etag:               movieItemEtag(m),
     IsFolder:           false,
     ImageTags:          {
       ...(posterTag ? { Primary: posterTag } : {}),
@@ -2400,10 +2484,19 @@ function candidateTokenFromMediaSourceId(mediaSourceId: string | undefined): str
   return match?.[1] ?? null
 }
 
+function playbackProfileFromMediaSourceId(mediaSourceId: string | undefined, itemId?: string): PlaybackProfile | null {
+  if (!mediaSourceId) return null
+  if (itemId && !mediaSourceId.startsWith(`${itemId}:profile:`)) return null
+  const match = mediaSourceId.match(/:profile:([^:]+)$/i)
+  return playbackProfileForKey(match?.[1])
+}
+
 function signedPlaybackUrlForMediaSource(origin: string, playPath: string, mediaSourceId: string | undefined): string {
   const url = new URL(createSignedPlaybackUrl(origin, playPath))
   const candidate = candidateTokenFromMediaSourceId(mediaSourceId)
   if (candidate) url.searchParams.set('candidate', candidate)
+  const profile = playbackProfileFromMediaSourceId(mediaSourceId)
+  if (profile) url.searchParams.set('profile', profile.key)
   return url.toString()
 }
 
@@ -3337,11 +3430,13 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
   }
 
   app.get('/Items/:id', async (req, reply) => {
+    reply.header('Cache-Control', 'no-store')
     const user = requireRequestUser(req.headers, reply as never)
     if (!user) return
     return handleItem((req.params as { id: string }).id, reply as never, user, req.headers)
   })
   app.get('/Users/:userId/Items/:itemId', async (req, reply) => {
+    reply.header('Cache-Control', 'no-store')
     const user = requireRequestUser(req.headers, reply as never)
     if (!user) return
     return handleItem((req.params as { itemId: string }).itemId, reply as never, user, req.headers)
@@ -3929,8 +4024,14 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
     }
   }
 
-  app.get('/Items/:id/PlaybackInfo',  async (req, reply) => handlePlaybackInfo(req as never, reply as never))
-  app.post('/Items/:id/PlaybackInfo', async (req, reply) => handlePlaybackInfo(req as never, reply as never))
+  app.get('/Items/:id/PlaybackInfo',  async (req, reply) => {
+    reply.header('Cache-Control', 'no-store')
+    return handlePlaybackInfo(req as never, reply as never)
+  })
+  app.post('/Items/:id/PlaybackInfo', async (req, reply) => {
+    reply.header('Cache-Control', 'no-store')
+    return handlePlaybackInfo(req as never, reply as never)
+  })
 
   // Video stream redirect (fallback for some Infuse/VidHub versions)
   app.get('/Videos/:id/stream', async (req, reply) => {
@@ -3945,10 +4046,11 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       && mediaSourceId?.startsWith(`${id}:candidate:`)
       && opts.validatePlaybackCandidate?.(candidate, id),
     )
+    const profileMatches = Boolean(playbackProfileFromMediaSourceId(mediaSourceId, id))
     const headersWithToken = query?.api_key
       ? { ...req.headers as Record<string, string | string[] | undefined>, 'x-emby-token': query.api_key }
       : req.headers as Record<string, string | string[] | undefined>
-    const user = requestUser(headersWithToken) ?? ((sessionMatches || sourceMatches || candidateMatches) ? fallbackUser() : null)
+    const user = requestUser(headersWithToken) ?? ((sessionMatches || sourceMatches || candidateMatches || profileMatches) ? fallbackUser() : null)
 
     if (!user) return reply.code(401).send({ error: 'Unauthorized' })
 
