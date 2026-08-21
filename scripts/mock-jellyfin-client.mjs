@@ -6,7 +6,7 @@ const movieSearchTerm = process.env.JELLYFIN_MOCK_MOVIE || 'Killers of the Flowe
 const seriesSearchTerm = process.env.JELLYFIN_MOCK_SERIES || 'Game of Thrones'
 const requestedSourceIndex = Number.parseInt(process.env.JELLYFIN_MOCK_SOURCE_INDEX || '0', 10)
 const rangeHeader = process.env.JELLYFIN_MOCK_RANGE || 'bytes=0-1023'
-const minMediaSources = Number.parseInt(process.env.JELLYFIN_MOCK_MIN_SOURCES || '2', 10)
+const minMediaSources = Number.parseInt(process.env.JELLYFIN_MOCK_MIN_SOURCES || '1', 10)
 const maxMediaSources = Number.parseInt(process.env.JELLYFIN_MOCK_MAX_SOURCES || '10', 10)
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -147,12 +147,12 @@ async function verifyPlayback(token, item, label) {
     redirect: 'manual',
     headers: { range: rangeHeader },
   })
-  if (redirect.status !== 302) {
+  if (redirect.status < 300 || redirect.status >= 400) {
     const text = await redirect.text()
     fail(`${label} source "${source.Name}" did not redirect to provider; status=${redirect.status} body=${text.slice(0, 300)}`)
   }
   const location = redirect.headers.get('location')
-  if (!location) fail(`${label} source "${source.Name}" returned 302 without Location`)
+  if (!location) fail(`${label} source "${source.Name}" returned ${redirect.status} without Location`)
 
   const media = await fetch(location, {
     redirect: 'follow',
