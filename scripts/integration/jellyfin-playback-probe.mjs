@@ -1,36 +1,37 @@
 #!/usr/bin/env node
 
-const baseUrl = (process.env.FETCHERR_URL || 'http://127.0.0.1:9990').replace(/\/$/, '')
-const mediaKind = (process.env.JELLYFIN_MOCK_MEDIA || 'movie').toLowerCase()
-const movieSearchTerm = process.env.JELLYFIN_MOCK_MOVIE || 'Killers of the Flower Moon'
-const seriesSearchTerm = process.env.JELLYFIN_MOCK_SERIES || 'Game of Thrones'
-const requestedSourceIndex = Number.parseInt(process.env.JELLYFIN_MOCK_SOURCE_INDEX || '0', 10)
-const rangeHeader = process.env.JELLYFIN_MOCK_RANGE || 'bytes=0-1023'
-const minMediaSources = Number.parseInt(process.env.JELLYFIN_MOCK_MIN_SOURCES || '1', 10)
-const maxMediaSources = Number.parseInt(process.env.JELLYFIN_MOCK_MAX_SOURCES || '10', 10)
+const baseUrl = (process.env.JELLYFIN_BASE_URL || 'http://127.0.0.1:9990').replace(/\/$/, '')
+const mediaKind = (process.env.JELLYFIN_PROBE_MEDIA || 'movie').toLowerCase()
+const movieSearchTerm = process.env.JELLYFIN_PROBE_MOVIE || 'Killers of the Flower Moon'
+const seriesSearchTerm = process.env.JELLYFIN_PROBE_SERIES || 'Game of Thrones'
+const requestedSourceIndex = Number.parseInt(process.env.JELLYFIN_PROBE_SOURCE_INDEX || '0', 10)
+const rangeHeader = process.env.JELLYFIN_PROBE_RANGE || 'bytes=0-1023'
+const minMediaSources = Number.parseInt(process.env.JELLYFIN_PROBE_MIN_SOURCES || '1', 10)
+const maxMediaSources = Number.parseInt(process.env.JELLYFIN_PROBE_MAX_SOURCES || '10', 10)
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
-  console.log(`Usage: npm run mock:jellyfin
+  console.log(`Usage: npm run probe:jellyfin
 
 Environment:
-  FETCHERR_URL                  Fetcherr base URL, default http://127.0.0.1:9990
+  JELLYFIN_BASE_URL             Jellyfin-compatible base URL, default http://127.0.0.1:9990
   JELLYFIN_TOKEN                Existing Jellyfin access token
   JELLYFIN_USERNAME/PASSWORD    Credentials used when no token is supplied
-  JELLYFIN_MOCK_MEDIA           movie, episode, or all; default movie
-  JELLYFIN_MOCK_MOVIE           Movie search term; default Killers of the Flower Moon
-  JELLYFIN_MOCK_SERIES          Series search term; default Game of Thrones
-  JELLYFIN_MOCK_SOURCE_INDEX    MediaSource index to play; default 0
-  JELLYFIN_MOCK_MAX_SOURCES     Maximum expected MediaSources; default 10
+  JELLYFIN_PROBE_MEDIA          movie, episode, or all; default movie
+  JELLYFIN_PROBE_MOVIE          Movie search term; default Killers of the Flower Moon
+  JELLYFIN_PROBE_SERIES         Series search term; default Game of Thrones
+  JELLYFIN_PROBE_SOURCE_INDEX   MediaSource index to play; default 0
+  JELLYFIN_PROBE_MIN_SOURCES    Minimum expected MediaSources; default 1
+  JELLYFIN_PROBE_MAX_SOURCES    Maximum expected MediaSources; default 10
 `)
   process.exit(0)
 }
 
 if (!['movie', 'episode', 'all'].includes(mediaKind)) {
-  fail('JELLYFIN_MOCK_MEDIA must be movie, episode, or all')
+  fail('JELLYFIN_PROBE_MEDIA must be movie, episode, or all')
 }
 
 function fail(message) {
-  console.error(`mock-jellyfin: ${message}`)
+  console.error(`jellyfin-playback-probe: ${message}`)
   process.exit(1)
 }
 
@@ -57,7 +58,7 @@ async function authenticate() {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-emby-authorization': 'MediaBrowser Client="Fetcherr Mock", Device="CLI", DeviceId="fetcherr-mock", Version="1.0"',
+      'x-emby-authorization': 'MediaBrowser Client="Jellyfin Playback Probe", Device="CLI", DeviceId="jellyfin-playback-probe", Version="1.0"',
     },
     body: JSON.stringify({ Username: username, Pw: password }),
   })
@@ -70,9 +71,9 @@ async function jellyfin(token, path) {
   return request(path, {
     headers: {
       'x-emby-token': token,
-      'x-emby-client': 'Fetcherr Mock',
+      'x-emby-client': 'Jellyfin Playback Probe',
       'x-emby-device-name': 'CLI',
-      'x-emby-device-id': 'fetcherr-mock',
+      'x-emby-device-id': 'jellyfin-playback-probe',
     },
   })
 }

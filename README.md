@@ -100,6 +100,12 @@ This branch also preserves a separate Infuse workaround for version discovery. S
 
 Add Fetcherr as a Jellyfin server in VidHub. If prompted for an Emby endpoint, use `http://YOUR_SERVER:9990/emby`.
 
+## Jellyfin playback probe
+
+`scripts/integration/jellyfin-playback-probe.mjs` is a client-side integration probe. It exercises a Jellyfin-compatible endpoint (Fetcherr by default, or a real Jellyfin server) through authentication, search, playback-info/media-source discovery, redirect handling, and a small provider byte request. It does not provide a mock Jellyfin server.
+
+Run it with `npm run probe:jellyfin`. Set `JELLYFIN_BASE_URL` to target another endpoint and use the `JELLYFIN_PROBE_*` variables shown by `npm run probe:jellyfin -- --help` to select media and playback checks.
+
 ## Environment
 
 | Variable | Description |
