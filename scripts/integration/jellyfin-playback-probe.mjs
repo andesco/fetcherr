@@ -4,6 +4,8 @@ const baseUrl = (process.env.JELLYFIN_BASE_URL || 'http://127.0.0.1:9990').repla
 const mediaKind = (process.env.JELLYFIN_PROBE_MEDIA || 'movie').toLowerCase()
 const movieSearchTerm = process.env.JELLYFIN_PROBE_MOVIE || 'Killers of the Flower Moon'
 const seriesSearchTerm = process.env.JELLYFIN_PROBE_SERIES || 'Game of Thrones'
+const requestedSeason = parsePositiveInteger(process.env.JELLYFIN_PROBE_SEASON || '1', 'JELLYFIN_PROBE_SEASON')
+const requestedEpisode = parsePositiveInteger(process.env.JELLYFIN_PROBE_EPISODE || '1', 'JELLYFIN_PROBE_EPISODE')
 const requestedSourceIndex = Number.parseInt(process.env.JELLYFIN_PROBE_SOURCE_INDEX || '0', 10)
 const rangeHeader = process.env.JELLYFIN_PROBE_RANGE || 'bytes=0-1023'
 const minMediaSources = Number.parseInt(process.env.JELLYFIN_PROBE_MIN_SOURCES || '1', 10)
@@ -19,6 +21,8 @@ Environment:
   JELLYFIN_PROBE_MEDIA          movie, episode, or all; default movie
   JELLYFIN_PROBE_MOVIE          Movie search term; default Killers of the Flower Moon
   JELLYFIN_PROBE_SERIES         Series search term; default Game of Thrones
+  JELLYFIN_PROBE_SEASON         Season number; default 1
+  JELLYFIN_PROBE_EPISODE        Episode number within the season; default 1
   JELLYFIN_PROBE_SOURCE_INDEX   MediaSource index to play; default 0
   JELLYFIN_PROBE_MIN_SOURCES    Minimum expected MediaSources; default 1
   JELLYFIN_PROBE_MAX_SOURCES    Maximum expected MediaSources; default 10
@@ -33,6 +37,12 @@ if (!['movie', 'episode', 'all'].includes(mediaKind)) {
 function fail(message) {
   console.error(`jellyfin-playback-probe: ${message}`)
   process.exit(1)
+}
+
+function parsePositiveInteger(value, name) {
+  const number = Number.parseInt(value, 10)
+  if (!Number.isInteger(number) || number < 1) fail(`${name} must be a positive integer`)
+  return number
 }
 
 async function request(path, options = {}) {
@@ -123,15 +133,15 @@ async function selectEpisode(token, userId) {
     token,
     `/Users/${encodeURIComponent(userId)}/Items?ParentId=${encodeURIComponent(series.Id)}&IncludeItemTypes=Season&Limit=100`,
   )
-  const season = seasons.Items?.find(candidate => candidate.IndexNumber === 1) ?? seasons.Items?.[0]
-  if (!season) fail(`series "${series.Name}" returned no seasons`)
+  const season = seasons.Items?.find(candidate => candidate.IndexNumber === requestedSeason)
+  if (!season) fail(`series "${series.Name}" returned no season ${requestedSeason}`)
 
   const episodes = await jellyfin(
     token,
     `/Users/${encodeURIComponent(userId)}/Items?ParentId=${encodeURIComponent(season.Id)}&IncludeItemTypes=Episode&Limit=100`,
   )
-  const episode = episodes.Items?.find(candidate => candidate.ParentIndexNumber === 1 && candidate.IndexNumber === 1) ?? episodes.Items?.[0]
-  if (!episode) fail(`season "${season.Name}" returned no episodes`)
+  const episode = episodes.Items?.find(candidate => candidate.ParentIndexNumber === requestedSeason && candidate.IndexNumber === requestedEpisode)
+  if (!episode) fail(`season "${season.Name}" returned no episode ${requestedEpisode}`)
   return episode
 }
 

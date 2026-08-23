@@ -106,6 +106,16 @@ Add Fetcherr as a Jellyfin server in VidHub. If prompted for an Emby endpoint, u
 
 Run it with `npm run probe:jellyfin`. Set `JELLYFIN_BASE_URL` to target another endpoint and use the `JELLYFIN_PROBE_*` variables shown by `npm run probe:jellyfin -- --help` to select media and playback checks.
 
+To probe a specific episode, set the series, season, and episode explicitly:
+
+```bash
+JELLYFIN_PROBE_MEDIA=episode \
+JELLYFIN_PROBE_SERIES="Series name" \
+JELLYFIN_PROBE_SEASON=2 \
+JELLYFIN_PROBE_EPISODE=13 \
+npm run probe:jellyfin
+```
+
 ## Environment
 
 | Variable | Description |
