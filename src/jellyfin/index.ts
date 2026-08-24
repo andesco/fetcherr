@@ -998,7 +998,10 @@ function sortMdblistFolderItems<T extends Record<string, unknown>>(items: T[], s
     else if (['communityrating', 'rating', 'imdbrating'].includes(normalizedSort)) result = compareNumbers(a.CommunityRating, b.CommunityRating)
     else if (['officialrating', 'parentalrating'].includes(normalizedSort)) result = compareStrings(a.OfficialRating, b.OfficialRating)
     else if (['premieredate', 'releasedate', 'productionyear'].includes(normalizedSort)) result = compareDates(a.PremiereDate ?? a.ProductionYear, b.PremiereDate ?? b.ProductionYear)
-    else if (['datecreated', 'dateshowadded', 'dateadded', 'addeddate'].includes(normalizedSort)) result = sourceOrder(a, b)
+    // MDBList rank 1 is represented by the newest synthetic DateCreated.
+    // Therefore Infuse's descending Date Added order must put source position
+    // 1 first; ascending reverses the source ranking.
+    else if (['datecreated', 'dateshowadded', 'dateadded', 'addeddate'].includes(normalizedSort)) result = sourceOrder(a, b) * -1
     else if (['dateepisodeadded', 'episodeaddeddate'].includes(normalizedSort)) result = compareDates(a.EpisodeAddedDate, b.EpisodeAddedDate)
     else if (['dateplayed', 'lastplayeddate'].includes(normalizedSort)) result = compareUserData(a, b, 'LastPlayedDate')
     else if (normalizedSort === 'playcount') result = compareUserData(a, b, 'PlayCount')
