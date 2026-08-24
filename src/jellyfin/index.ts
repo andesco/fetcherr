@@ -861,13 +861,20 @@ function buildDiscoverRootFolderItem(user: AppUser) {
   }
 }
 
+function mdblistCollectionTypeForUrl(url: string): 'movies' | 'tvshows' | 'boxsets' {
+  const pathParts = mdblistListPathFromUrl(url).split('/').map(part => part.toLowerCase())
+  if (pathParts.includes('movies')) return 'movies'
+  if (pathParts.includes('shows') || pathParts.includes('series')) return 'tvshows'
+  return 'boxsets'
+}
+
 function buildMdblistCollectionItem(entry: MdblistListEntry, count: number) {
   const path = mdblistListPathFromUrl(entry.url)
   const id = mdblistCollectionIdFromPath(path)
   const name = nameForMdblistUrl(entry.url)
   return {
     Id: id, ServerId: SERVER_GUID, Name: name, SortName: name.toLowerCase(),
-    Type: 'BoxSet', CollectionType: 'boxsets', IsFolder: true,
+    Type: 'CollectionFolder', CollectionType: mdblistCollectionTypeForUrl(entry.url), IsFolder: true,
     CanDelete: false, CanDownload: false, PlayAccess: 'Full',
     ChildCount: count, RecursiveItemCount: count,
     ImageTags: { Primary: 'mdblist', Backdrop: 'mdblist' },
