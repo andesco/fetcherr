@@ -943,22 +943,84 @@ function mdblistFolderMembers(user: AppUser, listUrl: string): CollectionMember[
   })
 }
 
+function latestEpisodePlayedDate(showTmdbId: number, userId: string): string {
+  const row = getDb().prepare(`
+    SELECT max(u.last_played_date) AS last_played_date
+    FROM user_item_data u
+    JOIN episodes e
+      ON u.item_id = ('00000000-0000-4000-8003-' || lower(printf('%06x%03x%03x', e.show_tmdb_id, e.season_number, e.episode_number)))
+    WHERE u.user_id = ? AND e.show_tmdb_id = ?
+  `).get(userId, showTmdbId) as { last_played_date?: string } | undefined
+  return row?.last_played_date ?? ''
+}
+
+function latestEpisodeAddedDate(showTmdbId: number): string {
+  const row = getDb().prepare('SELECT max(synced_at) AS synced_at FROM episodes WHERE show_tmdb_id = ?')
+    .get(showTmdbId) as { synced_at?: string } | undefined
+  return row?.synced_at ?? ''
+}
+
 function sortMdblistFolderItems<T extends Record<string, unknown>>(items: T[], sortBy?: string, sortOrder?: string): T[] {
   const normalizedSort = (sortBy ?? '').split(',')[0].trim().toLowerCase()
   const normalizedOrder = (sortOrder ?? '').split(',')[0].trim().toLowerCase()
   const direction = normalizedOrder === 'ascending' || normalizedOrder === 'asc' ? 1 : -1
   const compareStrings = (a: unknown, b: unknown) => String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' })
   const compareNumbers = (a: unknown, b: unknown) => (Number(a ?? 0) || 0) - (Number(b ?? 0) || 0)
+  const compareDates = (a: unknown, b: unknown) => compareStrings(a, b)
+  const compareUserData = (a: T, b: T, field: 'PlayCount' | 'LastPlayedDate') => {
+    const aValue = (a.UserData as Record<string, unknown> | undefined)?.[field]
+    const bValue = (b.UserData as Record<string, unknown> | undefined)?.[field]
+    return field === 'PlayCount' ? compareNumbers(aValue, bValue) : compareDates(aValue, bValue)
+  }
+  const sourceOrder = (a: T, b: T) => compareNumbers(a.SourcePosition, b.SourcePosition)
+    || compareStrings(a.SortName ?? a.Name, b.SortName ?? b.Name)
+
+  if (!normalizedSort) return [...items]
+  if (normalizedSort === 'random') {
+    const shuffled = [...items]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+    return shuffled
+  }
 
   return [...items].sort((a, b) => {
-    if (['sortname', 'name'].includes(normalizedSort)) return compareStrings(a.SortName ?? a.Name, b.SortName ?? b.Name) * direction
-    if (['communityrating', 'rating', 'imdbrating'].includes(normalizedSort)) return compareNumbers(a.CommunityRating, b.CommunityRating) * direction
-    if (['officialrating', 'parentalrating'].includes(normalizedSort)) return compareStrings(a.OfficialRating, b.OfficialRating) * direction
-    if (['premieredate', 'releasedate', 'productionyear'].includes(normalizedSort)) return compareStrings(a.PremiereDate ?? a.ProductionYear, b.PremiereDate ?? b.ProductionYear) * direction
-    if (['datecreated', 'dateshowadded', 'dateadded', 'addeddate'].includes(normalizedSort)) return compareStrings(a.DateCreated, b.DateCreated) * direction
-    if (['runtime', 'runtimeticks'].includes(normalizedSort)) return compareNumbers(a.RunTimeTicks, b.RunTimeTicks) * direction
-    return compareNumbers(a.SourcePosition, b.SourcePosition) || compareStrings(a.SortName ?? a.Name, b.SortName ?? b.Name)
+    let result: number | undefined
+    if (['sortname', 'name'].includes(normalizedSort)) result = compareStrings(a.SortName ?? a.Name, b.SortName ?? b.Name)
+    else if (['communityrating', 'rating', 'imdbrating'].includes(normalizedSort)) result = compareNumbers(a.CommunityRating, b.CommunityRating)
+    else if (['officialrating', 'parentalrating'].includes(normalizedSort)) result = compareStrings(a.OfficialRating, b.OfficialRating)
+    else if (['premieredate', 'releasedate', 'productionyear'].includes(normalizedSort)) result = compareDates(a.PremiereDate ?? a.ProductionYear, b.PremiereDate ?? b.ProductionYear)
+    else if (['datecreated', 'dateshowadded', 'dateadded', 'addeddate'].includes(normalizedSort)) result = sourceOrder(a, b)
+    else if (['dateepisodeadded', 'episodeaddeddate'].includes(normalizedSort)) result = compareDates(a.EpisodeAddedDate, b.EpisodeAddedDate)
+    else if (['dateplayed', 'lastplayeddate'].includes(normalizedSort)) result = compareUserData(a, b, 'LastPlayedDate')
+    else if (normalizedSort === 'playcount') result = compareUserData(a, b, 'PlayCount')
+    else if (['runtime', 'runtimeticks'].includes(normalizedSort)) result = compareNumbers(a.RunTimeTicks, b.RunTimeTicks)
+    else if (['isfolder', 'folders'].includes(normalizedSort)) result = compareNumbers(a.IsFolder ? 1 : 0, b.IsFolder ? 1 : 0)
+    // Fetcherr does not currently store a critic score. Keep the MDBList rank
+    // stable instead of presenting TMDB's community score as a critic score.
+    else if (['criticrating', 'criticsrating'].includes(normalizedSort)) result = sourceOrder(a, b)
+    else result = sourceOrder(a, b)
+    return (result || 0) * direction
   })
+}
+
+function sortCollectionItems<T extends Record<string, unknown>>(items: T[], sortBy?: string, sortOrder?: string): T[] {
+  const normalizedSort = (sortBy ?? '').split(',')[0].trim().toLowerCase()
+  if (!normalizedSort) return [...items]
+  if (normalizedSort === 'random') {
+    const shuffled = [...items]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+    return shuffled
+  }
+  const direction = (sortOrder ?? '').split(',')[0].trim().toLowerCase() === 'ascending' || (sortOrder ?? '').split(',')[0].trim().toLowerCase() === 'asc' ? 1 : -1
+  const compare = (a: T, b: T) => String(a.SortName ?? a.Name ?? '').localeCompare(String(b.SortName ?? b.Name ?? ''), undefined, { sensitivity: 'base' })
+  // Collection tiles have no movie/show rating, runtime, or playback value.
+  // Name is the meaningful deterministic fallback for those Infuse keys.
+  return [...items].sort((a, b) => compare(a, b) * direction)
 }
 
 async function mdblistFolderContents(listUrl: string, user: AppUser, sortBy?: string, sortOrder?: string) {
@@ -978,10 +1040,16 @@ async function mdblistFolderContents(listUrl: string, user: AppUser, sortBy?: st
     }
     const show = getShowByTmdbId(member.tmdbId) ?? await fetchShowByTmdbId(member.tmdbId)
     if (show && canUserAccessShow(user, show)) {
+      const item = showToSeriesItem(show, user.id)
       items.push({
-        ...showToSeriesItem(show, user.id),
+        ...item,
         DateCreated: dateCreatedForSourcePosition(member.syncedAt, member.sourcePosition),
+        EpisodeAddedDate: latestEpisodeAddedDate(show.tmdbId),
         SourcePosition: member.sourcePosition ?? 0,
+        UserData: {
+          ...(item.UserData as Record<string, unknown>),
+          LastPlayedDate: latestEpisodePlayedDate(show.tmdbId, user.id),
+        },
       })
     }
   }
@@ -2793,7 +2861,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
         const traktItems = traktCollectionItemsForUser(user)
         const mdblistItems = mdblistCollectionItems(user)
         const discoverItems = discoverCollectionItemsForUser(user)
-        const collections = [...traktItems, ...mdblistItems, ...discoverItems]
+        const collections = sortCollectionItems([...traktItems, ...mdblistItems, ...discoverItems], SortBy, SortOrder)
         return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
       }
       if (includeTypes.includes('season')) {
@@ -2936,7 +3004,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const traktItems = traktCollectionItemsForUser(user)
       const mdblistItems = mdblistCollectionItems(user)
       const discoverItems = discoverCollectionItemsForUser(user)
-      const collections = [...traktItems, ...mdblistItems, ...discoverItems]
+      const collections = sortCollectionItems([...traktItems, ...mdblistItems, ...discoverItems], SortBy, SortOrder)
       return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
     }
 
@@ -2948,7 +3016,7 @@ export async function jellyfinRoutes(app: FastifyInstance, opts: JellyfinRouteOp
       const traktItems = traktCollectionItemsForUser(user)
       const mdblistItems = mdblistCollectionItems(user)
       const discoverItems = discoverCollectionItemsForUser(user)
-      const collections = [...traktItems, ...mdblistItems, ...discoverItems]
+      const collections = sortCollectionItems([...traktItems, ...mdblistItems, ...discoverItems], SortBy, SortOrder)
       return { Items: pagedItems(collections, offset, limit), TotalRecordCount: collections.length, StartIndex: offset }
     }
 
