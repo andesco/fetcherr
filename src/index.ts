@@ -1759,9 +1759,18 @@ async function resolveStremioPlayback(mediaType: StremioMediaType, externalId: s
   return resolvePlayableStream(streams, `${mediaType} ${externalId}`, playPath, undefined, true)
 }
 
-async function resolveEpisodePlayback(imdbId: string, season: number, episodeNumber: number, playbackClient = ''): Promise<PlayResolution> {
+async function resolveEpisodePlayback(
+  imdbId: string,
+  season: number,
+  episodeNumber: number,
+  playbackClient = '',
+  profileKey?: PlaybackProfileKey,
+): Promise<PlayResolution> {
   const playPath = `/play/${imdbId}/${season}/${episodeNumber}`
-  const label = `${imdbId} S${season}E${episodeNumber}`
+  const profile = playbackProfileForKey(profileKey)
+  const baseLabel = `${imdbId} S${season}E${episodeNumber}`
+  const label = profile ? `${baseLabel} (${profile.name})` : baseLabel
+  const resolutionKey = profile ? `${playPath}:profile:${profile.key}` : playPath
   const show = getShowByImdbId(imdbId)
   const episode = show
     ? getEpisodesForSeason(show.tmdbId, season).find(ep => ep.episodeNumber === episodeNumber)
@@ -1776,6 +1785,7 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
 
   const hasStreamProvider = Boolean(config.sootioUrl) || config.streamProviderUrls.length > 0
   const hasUsenet = isUsenetConfigured()
+  const runtimeTicks = (episode?.runtimeMins || 45) * 60 * 10_000_000
 
   if (hasStreamProvider) {
     try {
@@ -1791,10 +1801,14 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
         playbackClient,
         config.streamRankingMode === 'provider',
       )
+      const orderedStreams = streamsForPlaybackProfile(streams, profileKey, runtimeTicks)
+      if (profile) {
+        app.log.info(`play: profile ${profile.name} selected for ${label}, trying closest of ${orderedStreams.length} streams`)
+      }
       return await resolvePlayableStream(
-        streams,
+        orderedStreams,
         label,
-        playPath,
+        resolutionKey,
         `s${pad2(season)}e${pad2(episodeNumber)}`,
         true,
       )
@@ -1807,7 +1821,7 @@ async function resolveEpisodePlayback(imdbId: string, season: number, episodeNum
   if (hasUsenet) {
     const { url, filename } = await resolveUsenetEpisodeStream(imdbId, season, episodeNumber)
     app.log.info(`play: usenet resolved ${filename} for ${label}`)
-    clearFailedPlay(playPath)
+    clearFailedPlay(resolutionKey)
     return { url, filename, provider: 'Usenet' }
   }
 
@@ -1918,8 +1932,10 @@ app.get('/play/:imdbId', async (req, reply) => {
 
 app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
   const { imdbId, season, episode } = req.params as { imdbId: string; season: string; episode: string }
-  const query = req.query as { token?: string; expires?: string; candidate?: string } | undefined
+  const query = req.query as { token?: string; expires?: string; candidate?: string; profile?: string } | undefined
   const playPath = `/play/${imdbId}/${season}/${episode}`
+  const profile = playbackProfileForKey(query?.profile)
+  const resolutionKey = profile ? `${playPath}:profile:${profile.key}` : playPath
   if (!verifySignedPlaybackPath(playPath, query?.token, query?.expires)) {
     if (!requestPlaybackUser(req.headers)) {
       app.log.warn(`play: rejected unauthenticated episode playback request for ${imdbId} S${season}E${episode}`)
@@ -1928,31 +1944,33 @@ app.get('/play/:imdbId/:season/:episode', async (req, reply) => {
     }
     return reply.code(401).send({ error: 'Unauthorized' })
   }
-  const failedReason = getFailedPlayReason(playPath)
+  const failedReason = getFailedPlayReason(resolutionKey)
   if (failedReason) {
-    app.log.info(`play: cached miss for ${imdbId} S${season}E${episode} (${failedReason})`)
+    const baseLabel = `${imdbId} S${season}E${episode}`
+    const label = profile ? `${baseLabel} (${profile.name})` : baseLabel
+    app.log.info(`play: cached miss for ${label} (${failedReason})`)
     return reply.code(404).send({ error: failedReason, message: 'No Streams Found' })
   }
   const s = parseInt(season)
   const e = parseInt(episode)
-  app.log.info(`play: resolving episode stream for ${imdbId} S${s}E${e}`)
+  const label = profile ? `${imdbId} S${s}E${e} (${profile.name})` : `${imdbId} S${s}E${e}`
+  app.log.info(`play: resolving episode stream for ${label}`)
   try {
-    const label = `${imdbId} S${s}E${e}`
     const clientName = playbackClientName(playPath)
     const selectedCandidate = await resolvePlaybackCandidate(query?.candidate, playPath)
     const resolved = selectedCandidate ?? await (async () => {
-      const { promise, reused } = getOrCreatePlaybackResolution(playPath, label, () => resolveEpisodePlayback(imdbId, s, e, clientName))
+      const { promise, reused } = getOrCreatePlaybackResolution(resolutionKey, label, () => resolveEpisodePlayback(imdbId, s, e, clientName, profile?.key))
       if (reused) app.log.info(`play: using in-flight resolver for ${label}`)
       return promise
     })()
-    rememberTorBoxPlaybackUrl(playPath, resolved)
+    rememberTorBoxPlaybackUrl(resolutionKey, resolved)
     return reply.redirect(resolved.url, 302)
   } catch (err) {
     if (err instanceof PlaybackResolutionError) {
       return reply.code(err.statusCode).send(err.response)
     }
-    app.log.warn(`play: no stream for ${imdbId} S${s}E${e}: ${err}`)
-    cacheFailedPlay(playPath, 'No streams found')
+    app.log.warn(`play: no stream for ${label}: ${err}`)
+    cacheFailedPlay(resolutionKey, 'No streams found')
     return reply.code(404).send({ error: 'No stream available', message: 'No Streams Found' })
   }
 })

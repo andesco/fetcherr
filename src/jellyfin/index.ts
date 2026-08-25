@@ -49,7 +49,7 @@ const SHOWS_FOLDER_ID  = 'a0000000-0000-4000-8000-000000000002'
 const COLLECTIONS_FOLDER_ID = 'a0000000-0000-4000-8007-000000000001'
 const SEARCH_DISABLED_ITEM_ID = 'a0000000-0000-4000-800a-000000000001'
 const SEARCH_DISABLED_RUNTIME_TICKS = 60 * 10_000_000
-const MEDIA_SOURCE_ITEM_ETAG_VERSION = 'media-sources-discovery-v3'
+const MEDIA_SOURCE_ITEM_ETAG_VERSION = 'media-sources-discovery-v4'
 const SERVER_GUID      = 'a0000000-0000-0000-0000-000000000001'
 const SEARCH_SERVER_GUID = 'a0000000-0000-0000-0000-00000000f001'
 const DISCOVER_FOLDER_ID = 'a0000000-0000-4000-8000-000000000003'
@@ -1296,14 +1296,23 @@ function userDataForItem(itemId: string, ud: { played: boolean; playCount: numbe
   }
 }
 
-function movieItemEtag(movie: Movie): string {
+function mediaSourceItemEtag(scope: string, identity: string | number, syncedAt: string | undefined): string {
   return createHash('md5').update([
     MEDIA_SOURCE_ITEM_ETAG_VERSION,
-    movie.tmdbId,
-    movie.syncedAt,
+    scope,
+    identity,
+    syncedAt,
     config.mediaSourceSelection ? 'versions-enabled' : 'versions-disabled',
     config.mediaSourceLimit,
   ].join(':')).digest('hex')
+}
+
+function movieItemEtag(movie: Movie): string {
+  return mediaSourceItemEtag('movie', movie.tmdbId, movie.syncedAt)
+}
+
+function episodeItemEtag(ep: Episode, show: Show): string {
+  return mediaSourceItemEtag('episode', `${show.tmdbId}:${ep.seasonNumber}:${ep.episodeNumber}`, ep.syncedAt)
 }
 
 function virtualProfileMediaSourceId(itemId: string, profile: PlaybackProfile): string {
@@ -1328,8 +1337,8 @@ function virtualProfileDimensions(profile: PlaybackProfile): { width: number; he
   }
 }
 
-function virtualProfileMediaSources(movie: Movie, itemId: string, runtimeTicks: number) {
-  if (!config.mediaSourceSelection || !movie.imdbId) return []
+function virtualProfileMediaSources(itemId: string, runtimeTicks: number, hasPlaybackIdentity: boolean) {
+  if (!config.mediaSourceSelection || !hasPlaybackIdentity) return []
   if (!config.sootioUrl && config.streamProviderUrls.length === 0) return []
 
   return PLAYBACK_PROFILES.map(profile => {
@@ -1379,7 +1388,7 @@ function movieToItem(m: Movie, userId = DEFAULT_ADMIN_USER_ID) {
   const posterTag = m.posterPath ? m.posterPath.replace(/\W/g, '').slice(0, 16) : undefined
   const thumbTag = (m.backdropPath || m.posterPath) ? (m.backdropPath || m.posterPath).replace(/\W/g, '').slice(0, 16) : undefined
   const logoTag = m.logoPath ? m.logoPath.replace(/\W/g, '').slice(0, 16) : undefined
-  const virtualMediaSources = virtualProfileMediaSources(m, id, runtimeTicks)
+  const virtualMediaSources = virtualProfileMediaSources(id, runtimeTicks, Boolean(m.imdbId))
   return {
     Id:                 id,
     ServerId:           SERVER_GUID,
@@ -2268,6 +2277,7 @@ function episodeToItem(ep: Episode, show: Show, userId = DEFAULT_ADMIN_USER_ID) 
   const showPosterTag = show.posterPath ? show.posterPath.replace(/\W/g, '').slice(0, 16) : undefined
   const showBackdropTag = show.backdropPath ? show.backdropPath.replace(/\W/g, '').slice(0, 16) : undefined
   const showLogoTag = show.logoPath ? show.logoPath.replace(/\W/g, '').slice(0, 16) : undefined
+  const virtualMediaSources = virtualProfileMediaSources(id, runtimeTicks, Boolean(show.imdbId))
   return {
     Id:                    id,
     ServerId:              SERVER_GUID,
@@ -2295,11 +2305,18 @@ function episodeToItem(ep: Episode, show: Show, userId = DEFAULT_ADMIN_USER_ID) 
     ExternalUrls:          null,
     PremiereDate:          jellyfinPremiereDate(ep.airDate),
     DateCreated:           ep.airDate ? `${ep.airDate}T00:00:00Z` : ep.syncedAt,
+    Etag:                  episodeItemEtag(ep, show),
     IsFolder:              false,
     IndexNumber:           ep.episodeNumber,
     ParentIndexNumber:     ep.seasonNumber,
     RunTimeTicks:          runtimeTicks,
     Path:                  fakePath,
+    EnableMediaSourceDisplay: true,
+    ...(virtualMediaSources.length ? {
+      MediaSources: virtualMediaSources,
+      AlternateMediaSources: virtualMediaSources,
+      MediaSourceCount: virtualMediaSources.length,
+    } : {}),
     ImageTags:             ep.stillPath ? { Primary: 'still' } : (showBackdropTag ? { Primary: showBackdropTag } : {}),
     PrimaryImageTag:       undefined,
     BackdropImageTags:     [],
